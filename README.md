@@ -70,3 +70,4 @@ DEVECO_HOME="/c/Program Files/Huawei/DevEco Studio" node scripts/source-engine-h
 本项目以 [GNU General Public License v3.0](LICENSE) 发布。使用、修改或分发本项目（包括把它链接进你的应用）时，需要遵守 GPL-3.0 的条款。
 
 第三方组件（ohos_quickjs、QuickJS、部分 Huawei N-API 封装代码）分别遵循 MIT 与 Apache-2.0 许可，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与 [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt)。
+封面解密接入见 [公共封面解密](docs/cover-decoding.md)：原生书源可声明 `coverDecode`，宿主使用公共 `SourceCoverLoader` 按需加载，支持 AES-CBC 文件前缀 IV。

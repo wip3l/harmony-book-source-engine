@@ -46,8 +46,13 @@ try {
   assert.equal(urls.source(books[0].coverUrl), definition.url);
   assert.equal(urls.address(books[0].coverUrl), 'https://cdn.example.com/a.webp');
   assert.equal(books[0].coverUrl.includes(key), false);
+  const menus = await runner.exploreMenus();
+  const discovered = await runner.explore(menus[0].target || menus[0].url, 1);
+  assert.equal(discovered[0].coverUrl, books[0].coverUrl);
+  const detail = await runner.detail({ bookUrl: 'https://example.com/book', vars: {} });
+  assert.equal(detail.coverUrl, books[0].coverUrl);
   assert.equal(urls.wrap('', definition.url), '');
   assert.equal(urls.source(urls.wrap('https://cdn.example.com/a#old', definition.url)), definition.url);
   assert.throws(() => urls.source('https://cdn.example.com/a#source-cover-v1=%'));
-  console.log('source-cover-check: AES prefix/fixed IV, bounds, malformed parameters and native search passed');
+  console.log('source-cover-check: AES prefix/fixed IV, bounds, malformed parameters and search/explore/detail passed');
 } finally { mods.cleanup(); fs.rmSync(dir, { recursive: true, force: true }); }

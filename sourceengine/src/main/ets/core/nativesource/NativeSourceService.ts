@@ -16,6 +16,7 @@ import { BookUrlResolver } from '../book/BookUrlResolver';
 import { BookFieldSanitizer } from '../../utils/BookFieldSanitizer';
 import type { NativeValue } from './NativeExpr';
 import { NativeSourceRunner } from './NativeSourceRunner';
+import { SourceCoverUrl } from './SourceCoverUrl';
 import type {
   NativeBookInput, NativeBookRecord, NativeContentResult, NativeMenuEntry, NativeRequest, NativeResponse,
   NativeRunnerHost
@@ -553,7 +554,7 @@ export class NativeSourceService {
     book.wordCount = BookFieldSanitizer.prefer(record.wordCount, book.wordCount);
     book.latestChapterTitle = BookFieldSanitizer.prefer(record.lastChapter, book.latestChapterTitle);
     book.updateTime = BookFieldSanitizer.prefer(record.updateTime, book.updateTime);
-    book.coverUrl = book.coverUrl || record.coverUrl;
+    book.coverUrl = SourceCoverUrl.isEncoded(record.coverUrl) ? record.coverUrl : book.coverUrl || record.coverUrl;
     book.tocUrl = record.tocUrl || book.tocUrl || book.bookUrl;
     if (record.type) book.type = NativeSourceService.typeBits(record.type, source);
     else if (!Number(book.type)) book.type = NativeSourceService.typeBits('', source);
