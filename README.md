@@ -61,6 +61,7 @@ export DEVECO_SDK_HOME="/c/Program Files/Huawei/DevEco Studio/sdk"
 ```bash
 for f in scripts/*-check.mjs; do node --experimental-strip-types "$f" || exit 1; done
 DEVECO_HOME="/c/Program Files/Huawei/DevEco Studio" node scripts/source-engine-host-check.cjs
+DEVECO_HOME="/c/Program Files/Huawei/DevEco Studio" node scripts/web-book-fetch-wait-check.cjs
 ```
 
 这些脚本只在 Node 里跑纯逻辑，平台 API 用替身代替，不能代替真机验证。

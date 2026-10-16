@@ -319,6 +319,10 @@ export class WebBookFetchRuntime {
         WebBookFetchRuntime.WEB_JS_RETRY_INTERVAL_MS);
       return;
     }
+    if (!this.matchesWebJs(task, value)) {
+      this.finishActive(this.failure(finalUrl, '网页等待条件未满足，未取得可用内容'));
+      return;
+    }
     this.finishActive(this.success(finalUrl, value && value !== 'undefined' && value !== 'null' ? value : html));
   }
 
@@ -328,11 +332,16 @@ export class WebBookFetchRuntime {
   }
 
   private shouldRetryWebJs(task: WebBookFetchTask, value: string): boolean {
+    // Honor the declared wait duration; the request timer remains the hard limit.
+    const maxAttempts = Math.max(1, Math.min(120, Math.floor(task.request.webJsMaxAttempts || 1)));
+    return task.webJsAttempts < maxAttempts && !this.matchesWebJs(task, value);
+  }
+
+  private matchesWebJs(task: WebBookFetchTask, value: string): boolean {
     const pattern = String(task.request.webJsAcceptPattern || '');
-    const maxAttempts = Math.max(1, Math.min(20, Math.floor(task.request.webJsMaxAttempts || 1)));
-    if (!pattern || task.webJsAttempts >= maxAttempts) return false;
+    if (!pattern) return true;
     try {
-      return !new RegExp(pattern, 'i').test(value);
+      return new RegExp(pattern, 'i').test(value);
     } catch (_) {
       return false;
     }
