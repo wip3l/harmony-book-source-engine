@@ -71,3 +71,5 @@ DEVECO_HOME="/c/Program Files/Huawei/DevEco Studio" node scripts/source-engine-h
 
 第三方组件（ohos_quickjs、QuickJS、部分 Huawei N-API 封装代码）分别遵循 MIT 与 Apache-2.0 许可，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与 [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt)。
 封面解密接入见 [公共封面解密](docs/cover-decoding.md)：原生书源可声明 `coverDecode`，宿主使用公共 `SourceCoverLoader` 按需加载，支持 AES-CBC 文件前缀 IV。
+
+书源作者请阅读[公共书源规则开发文档](docs/book-source-development.md)。规则格式与示例在此统一维护，轻页和简听的文档入口共同引用，宿主 UI 与安全策略由各应用维护。

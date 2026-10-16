@@ -1,21 +1,6 @@
 # 公共封面解密
 
-原生书源可在顶层声明 `coverDecode`，统一作用于搜索、发现和详情的 `fields.coverUrl`：
-
-```json
-{
-  "coverDecode": {
-    "algorithm": "AES/CBC/PKCS7Padding",
-    "key": "0123456789abcdef",
-    "keyEncoding": "utf8",
-    "ivPrefixBytes": 16
-  }
-}
-```
-
-参数为字面值，不执行脚本。keyEncoding 默认 hex，也支持 utf8；AES 密钥为 16/24/32 字节。
-`ivPrefixBytes:16` 表示文件前 16 字节是 IV，其余为密文；固定 IV 使用 32 位十六进制 `iv`，与前缀模式互斥。
-算法支持 AES/CBC/PKCS5Padding 和 AES/CBC/PKCS7Padding。普通 JPEG/PNG/GIF/BMP/WebP/AVIF 图片直接通过；输入限 8 MiB，解密结果必须具有图片文件头。
+书源字段、示例、算法和大小限制统一维护在[公共书源规则开发文档：加密封面](book-source-development.md#加密封面-coverdecode)。本页仅描述宿主加载协议。
 
 引擎返回带 `#source-cover-v1=` 的 HTTP 封面地址，仅保存书源标识，不携带密钥或登录凭据。
 宿主应保留该地址用于收藏/备份，并用 `SourceCoverUrl.isEncoded/source` 查找已导入书源，
