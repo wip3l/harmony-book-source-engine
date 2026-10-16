@@ -5,6 +5,7 @@
  */
 
 import { NativeExpr, NativeScope } from './NativeExpr';
+import { SourceCoverUrl } from './SourceCoverUrl';
 import type { NativeExprHost, NativeValue } from './NativeExpr';
 import type {
   NativeActionSpec, NativeCommentsSpec, NativeContentSpec, NativeFetchSpec, NativeRequestSpec, NativeSourceDefinition,
@@ -886,7 +887,7 @@ export class NativeSourceRunner {
       author: text('author'),
       kind: text('kind'),
       intro: text('intro'),
-      coverUrl: url('coverUrl'),
+      coverUrl: this.definition.coverDecode ? SourceCoverUrl.wrap(url('coverUrl'), this.definition.url) : url('coverUrl'),
       wordCount: text('wordCount'),
       lastChapter: text('lastChapter'),
       updateTime: text('updateTime'),

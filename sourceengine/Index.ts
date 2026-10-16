@@ -316,3 +316,7 @@ export {
   SourceWebSession, SourceExecutionState, SourceDiagnostics, SourceEngineHostAdapter, SourceEngineHost
 } from './src/main/ets/core/host/SourceEngineHost';
 export { NativeSourceImport } from './src/main/ets/core/nativesource/NativeSourceImport';
+export { SourceCoverUrl } from './src/main/ets/core/nativesource/SourceCoverUrl';
+export { SourceImageDecoder } from './src/main/ets/core/nativesource/SourceImageDecoder';
+export { SourceCoverLoader } from './src/main/ets/core/nativesource/SourceCoverLoader';
+export type { NativeCoverDecodeSpec } from './src/main/ets/core/nativesource/NativeSourceSpec';
