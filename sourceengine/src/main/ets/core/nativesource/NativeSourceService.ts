@@ -41,6 +41,7 @@ import type { NativeBrowserResult } from './NativeSourceInteraction';
 import type { NativeScriptEngine } from './NativeScriptHost';
 import { BookSourceRuntimeStore } from '../book/BookSourceRuntimeStore';
 import { deviceInfo } from '@kit.BasicServicesKit';
+import { SourceEngineHost } from '../host/SourceEngineHost';
 
 export interface NativeFilterGroup {
   title: string;
@@ -63,6 +64,8 @@ export interface NativeVarItem {
 }
 
 class NativeHost implements NativeRunnerHost {
+  evaluateExpression?: NativeRunnerHost['evaluateExpression'];
+  private nativeScripts: Pick<NativeRunnerHost, 'scriptEngine' | 'evaluateExpression'> | undefined;
   private source: BookSource;
   private http: HttpClient;
   private cancelled: () => boolean;
@@ -80,6 +83,8 @@ class NativeHost implements NativeRunnerHost {
     this.cancelled = cancelled;
     this.maxResponseBytes = maxResponseBytes;
     this.debugContext = debugContext;
+    this.nativeScripts = SourceEngineHost.nativeScripts()?.create(source, this);
+    this.evaluateExpression = this.nativeScripts?.evaluateExpression;
     if (debugContext) {
       this.trace = (entry: NativeRuleTrace): void => {
         const trace = new BookSourceDebugRuleTrace();
@@ -180,6 +185,7 @@ class NativeHost implements NativeRunnerHost {
   }
 
   scriptEngine(code: string): NativeScriptEngine {
+    if (this.nativeScripts?.scriptEngine) return this.nativeScripts.scriptEngine(code);
     return NativeScriptSessions.forCode(code);
   }
 

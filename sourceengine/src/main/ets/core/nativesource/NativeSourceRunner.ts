@@ -91,6 +91,8 @@ export interface NativeRunnerHost extends NativeExprHost {
   selectItems(content: string, rule: string, baseUrl: string): NativeValue[];
   /** 书源 js 字段的执行器；不提供时调用 JS 函数会报“不支持”。 */
   scriptLibrary?(code: string): NativeScriptLibrary;
+  evaluateExpression?(code: string, library: string, expression: string, scope: Record<string, NativeValue>,
+    template: boolean, cancelled: () => boolean): Promise<NativeValue>;
   /** 脚本阶段的后台引擎；不提供时脚本阶段报“不支持”。 */
   scriptEngine?(code: string): NativeScriptEngine;
   /** 脚本里的 cookie.*：name 为空时读整条 Cookie、删除全部。 */
@@ -335,19 +337,19 @@ export class NativeSourceRunner {
     const submit = login ? login.submit : undefined;
     if (!submit) return { ok: false, token: '', user: '', message: '该书源没有配置表单登录' };
     const scope = (await this.baseScope()).set('form', form);
-    const response = await this.host.fetch(this.buildRequest(submit, scope, ''));
+    const response = await this.host.fetch((await this.buildRequest(submit, scope, '')));
     if (!response.ok || !response.body) {
       return { ok: false, token: '', user: '', message: this.describeFailure('登录', response) };
     }
     const page = this.responseScope(scope, response.body, response.url);
-    const ok = NativeExpr.isTruthy(this.value(submit.ok, page, false, 'login.submit.ok'));
+    const ok = NativeExpr.isTruthy((await this.value(submit.ok, page, false, 'login.submit.ok')));
     const message = submit.message ?
-      NativeExpr.toText(this.value(submit.message, page, false, 'login.submit.message')).trim() : '';
+      NativeExpr.toText((await this.value(submit.message, page, false, 'login.submit.message'))).trim() : '';
     if (!ok) return { ok: false, token: '', user: '', message: message || '登录失败' };
     return {
       ok: true,
-      token: submit.token ? NativeExpr.toText(this.value(submit.token, page, false, 'login.submit.token')).trim() : '',
-      user: submit.user ? NativeExpr.toText(this.value(submit.user, page, false, 'login.submit.user')).trim() : '',
+      token: submit.token ? NativeExpr.toText((await this.value(submit.token, page, false, 'login.submit.token'))).trim() : '',
+      user: submit.user ? NativeExpr.toText((await this.value(submit.user, page, false, 'login.submit.user'))).trim() : '',
       message: message
     };
   }
@@ -429,10 +431,10 @@ export class NativeSourceRunner {
     const entries: NativeActionEntry[] = [];
     for (let i = 0; i < specs.length; i++) {
       const spec = specs[i];
-      if (spec.when && !NativeExpr.isTruthy(this.value(spec.when, scope, false, `actions[${i}].when`))) continue;
-      const label = NativeExpr.toText(this.template(spec.label, scope)).trim();
+      if (spec.when && !NativeExpr.isTruthy((await this.value(spec.when, scope, false, `actions[${i}].when`)))) continue;
+      const label = NativeExpr.toText((await this.template(spec.label, scope))).trim();
       if (!label) continue;
-      const open = spec.open ? NativeExpr.resolveUrl(NativeExpr.toText(this.template(spec.open, scope)).trim(),
+      const open = spec.open ? NativeExpr.resolveUrl(NativeExpr.toText((await this.template(spec.open, scope))).trim(),
         this.definition.url) : '';
       entries.push({ index: i, label: label, open: /^https?:\/\//i.test(open) ? open : '' });
     }
@@ -453,7 +455,7 @@ export class NativeSourceRunner {
     if (!response.ok) return this.describeFailure('操作', response);
     if (!messageSpec) return '已完成';
     const page = this.responseScope(scope, response.body || '', response.url || request.url);
-    return NativeExpr.toText(this.value(messageSpec, page, false, 'content.links.message')).trim() || '已完成';
+    return NativeExpr.toText((await this.value(messageSpec, page, false, 'content.links.message'))).trim() || '已完成';
   }
 
   private async performAction(spec: NativeActionSpec, scope: NativeScope, field: string,
@@ -461,7 +463,7 @@ export class NativeSourceRunner {
     if (spec.script) {
       const fn = String(spec.script).trim();
       const ctx = this.scriptContext(scope, 'action');
-      ctx['action'] = NativeExpr.toText(this.template(spec.label || '', scope)).trim();
+      ctx['action'] = NativeExpr.toText((await this.template(spec.label || '', scope))).trim();
       for (const key of Object.keys(extra)) ctx[key] = extra[key];
       try {
         const run = await this.runScriptFunction(fn, ctx, field, scope, true, null);
@@ -470,13 +472,13 @@ export class NativeSourceRunner {
         return `操作失败：${(e as Error).message}`;
       }
     }
-    const request = this.buildRequest(spec, scope, '');
+    const request = (await this.buildRequest(spec, scope, ''));
     if (!request.url) return '操作没有可用的地址';
     const response = await this.host.fetch(request);
     if (!response.ok) return this.describeFailure('操作', response);
     if (!spec.message) return '已完成';
     const page = this.responseScope(scope, response.body || '', response.url || request.url);
-    return NativeExpr.toText(this.value(spec.message, page, false, `${field}.message`)).trim() || '已完成';
+    return NativeExpr.toText((await this.value(spec.message, page, false, `${field}.message`))).trim() || '已完成';
   }
 
   setCancelCheck(check: () => boolean): NativeSourceRunner {
@@ -500,7 +502,7 @@ export class NativeSourceRunner {
     const stage = this.scripted(this.requireStage(this.definition.search, '搜索'), BOOK_FIELD_NAMES);
     const scope = (await this.baseScope()).set('key', key).set('page', page);
     const loaded = await this.loadStage(stage, scope, '', '搜索');
-    return this.readBooks(stage, loaded, 'search');
+    return (await this.readBooks(stage, loaded, 'search'));
   }
 
   /** 用书源声明的检查接口确认登录状态。 */
@@ -508,16 +510,16 @@ export class NativeSourceRunner {
     const check = this.definition.login ? this.definition.login.check : undefined;
     if (!check) return { ok: false, name: '', message: '该书源没有配置登录检查' };
     const scope = (await this.baseScope());
-    const request = this.buildRequest(check, scope, '');
+    const request = (await this.buildRequest(check, scope, ''));
     const response = await this.host.fetch(request);
     if (!response.ok || !response.body) {
       return { ok: false, name: '', message: this.describeFailure('登录检查', response) };
     }
     const pageScope = this.responseScope(scope, response.body, response.url || request.url);
-    const ok = NativeExpr.isTruthy(this.value(check.ok, pageScope));
+    const ok = NativeExpr.isTruthy((await this.value(check.ok, pageScope)));
     return {
       ok: ok,
-      name: ok && check.name ? NativeExpr.toText(this.value(check.name, pageScope)).trim() : '',
+      name: ok && check.name ? NativeExpr.toText((await this.value(check.name, pageScope))).trim() : '',
       message: ok ? '' : '未登录或登录已失效'
     };
   }
@@ -529,14 +531,14 @@ export class NativeSourceRunner {
     const menus = explore.menus || [];
     for (let i = 0; i < menus.length; i++) {
       const menu = menus[i];
-      if (menu.when && !NativeExpr.isTruthy(this.value(menu.when, scope))) continue;
-      const title = NativeExpr.toText(this.template(menu.title || '', scope));
+      if (menu.when && !NativeExpr.isTruthy((await this.value(menu.when, scope)))) continue;
+      const title = NativeExpr.toText((await this.template(menu.title || '', scope)));
       if (!title) continue;
       entries.push({ title: title, target: menu.url ? `${MENU_STATIC}${i}` : '' });
     }
     const dynamic = explore.dynamicMenus;
     if (dynamic) {
-      const request = this.buildRequest(dynamic, scope, '');
+      const request = (await this.buildRequest(dynamic, scope, ''));
       if (request.url) {
         const response = await this.host.fetch(request);
         if (!response.ok || !response.body) {
@@ -544,13 +546,13 @@ export class NativeSourceRunner {
         } else {
           const baseUrl = response.url || request.url;
           const pageScope = this.responseScope(scope, response.body, baseUrl);
-          const items = this.listItems(dynamic.list, pageScope, baseUrl);
+          const items = (await this.listItems(dynamic.list, pageScope, baseUrl));
           for (const item of items) {
             const itemScope = pageScope.child().set('item', item);
-            const title = NativeExpr.toText(this.value(dynamic.title, itemScope)).trim();
+            const title = NativeExpr.toText((await this.value(dynamic.title, itemScope))).trim();
             if (!title) continue;
             // 目标地址里通常带页码，到真正打开分类时再渲染，这里只记下条目本身。
-            const hasTarget = NativeExpr.isTruthy(this.value(dynamic.target, itemScope.child().set('page', 1)));
+            const hasTarget = NativeExpr.isTruthy((await this.value(dynamic.target, itemScope.child().set('page', 1))));
             entries.push({ title: title, target: hasTarget ? MENU_ITEM + JSON.stringify(item) : '' });
           }
         }
@@ -568,8 +570,8 @@ export class NativeSourceRunner {
     let menu: NativeMenuSpec | undefined = undefined;
     if (target.startsWith(MENU_STATIC)) {
       menu = (explore.menus || [])[Number(target.substring(MENU_STATIC.length))];
-      url = menu && menu.url ? NativeExpr.toText(this.template(menu.url, scope)) : '';
-      title = menu ? NativeExpr.toText(this.template(menu.title || '', scope)) : '';
+      url = menu && menu.url ? NativeExpr.toText((await this.template(menu.url, scope))) : '';
+      title = menu ? NativeExpr.toText((await this.template(menu.title || '', scope))) : '';
     } else if (target.startsWith(MENU_ITEM) && explore.dynamicMenus) {
       let item: NativeValue = null;
       try {
@@ -577,7 +579,7 @@ export class NativeSourceRunner {
       } catch (e) {
         item = null;
       }
-      url = NativeExpr.toText(this.value(explore.dynamicMenus.target, scope.child().set('item', item)));
+      url = NativeExpr.toText((await this.value(explore.dynamicMenus.target, scope.child().set('item', item))));
       menuItem = item;
     }
     if (!url) throw new NativeSourceError('发现分类没有可用的地址');
@@ -589,7 +591,7 @@ export class NativeSourceRunner {
     if (menu && menu.body !== undefined) stage.body = menu.body;
     const loaded = await this.loadStage(stage,
       scope.child().set('__url', url).set('__title', title).set('__menuItem', menuItem), '', '发现');
-    return this.readBooks(explore, loaded, 'explore');
+    return (await this.readBooks(explore, loaded, 'explore'));
   }
 
   async detail(book: NativeBookInput): Promise<NativeBookRecord> {
@@ -605,13 +607,13 @@ export class NativeSourceRunner {
       this.scriptKeep = null;
     }
     await this.runExtraFetches(this.definition.detail ? this.definition.detail.fetch : undefined, loaded);
-    const record = this.readBook(stage.fields || {}, loaded.scope, loaded.baseUrl, 'detail');
+    const record = (await this.readBook(stage.fields || {}, loaded.scope, loaded.baseUrl, 'detail'));
     if (!record.bookUrl) record.bookUrl = book.bookUrl;
     for (const key of Object.keys(scriptKeep)) record.keep[key] = scriptKeep[key];
     const keep = this.definition.detail ? this.definition.detail.keep : undefined;
     if (keep) {
       for (const key of Object.keys(keep)) {
-        record.keep[key] = NativeExpr.toText(this.value(keep[key], loaded.scope, false, `detail.keep.${key}`));
+        record.keep[key] = NativeExpr.toText((await this.value(keep[key], loaded.scope, false, `detail.keep.${key}`)));
       }
     }
     return record;
@@ -637,7 +639,7 @@ export class NativeSourceRunner {
       if (full) break;
       // 脚本阶段自己处理翻页。
       if (!stage.nextUrl || stage.script) break;
-      const pending = this.nextUrls(stage.nextUrl, loaded, 'toc.nextUrl').filter((url: string): boolean => !visited.has(url));
+      const pending = (await this.nextUrls(stage.nextUrl, loaded, 'toc.nextUrl')).filter((url: string): boolean => !visited.has(url));
       if (pending.length === 0) break;
       if (pending.length === 1) {
         nextUrl = pending[0];
@@ -650,8 +652,8 @@ export class NativeSourceRunner {
       for (let offset = 0; offset < listed.length; offset += batchSize) {
         if (this.cancelled()) return [];
         const batch = listed.slice(offset, offset + batchSize);
-        const pages = await Promise.all(batch.map(async (url: string, index: number): Promise<StagePage> =>
-          this.loadStage(nextStage, await pageScope(page + offset + index + 1, url), defaultUrl, '目录')));
+        const pages = await Promise.all((await Promise.all(batch.map(async (url: string, index: number): Promise<StagePage> =>
+          (await this.loadStage(nextStage, await pageScope(page + offset + index + 1, url), defaultUrl, '目录'))))));
         for (const listedPage of pages) {
           const listedFull = await this.appendTocPage(stage, listedPage, chapters, limit, pacer);
           if (this.cancelled()) return [];
@@ -667,26 +669,26 @@ export class NativeSourceRunner {
   private async appendTocPage(stage: NativeTocSpec, loaded: StagePage, chapters: NativeChapterRecord[],
     limit: number, pacer: UiPacer): Promise<boolean> {
     const fields = stage.fields || {};
-    for (const item of this.listItems(stage.list || '', loaded.scope, loaded.baseUrl, 'toc.list')) {
+    for (const item of (await this.listItems(stage.list || '', loaded.scope, loaded.baseUrl, 'toc.list'))) {
       if (pacer.due()) {
         await pacer.yield();
         if (this.cancelled()) return true;
       }
       const itemScope = loaded.scope.child().set('item', item).set('index', chapters.length);
-      const title = NativeExpr.toText(this.value(fields['title'], itemScope, false, 'toc.fields.title')).trim();
+      const title = NativeExpr.toText((await this.value(fields['title'], itemScope, false, 'toc.fields.title'))).trim();
       if (!title) continue;
-      const isVolume = NativeExpr.isTruthy(this.value(fields['isVolume'], itemScope, false, 'toc.fields.isVolume'));
+      const isVolume = NativeExpr.isTruthy((await this.value(fields['isVolume'], itemScope, false, 'toc.fields.isVolume')));
       const url = NativeExpr.resolveUrl(
-        this.firstLine(this.first(this.value(fields['url'], itemScope, false, 'toc.fields.url'))), loaded.baseUrl);
+        this.firstLine(this.first((await this.value(fields['url'], itemScope, false, 'toc.fields.url')))), loaded.baseUrl);
       if (!url && !isVolume) continue;
       chapters.push({
         title: title,
         url: url,
-        isVip: NativeExpr.isTruthy(this.value(fields['isVip'], itemScope, false, 'toc.fields.isVip')),
-        isPay: NativeExpr.isTruthy(this.value(fields['isPay'], itemScope, false, 'toc.fields.isPay')),
+        isVip: NativeExpr.isTruthy((await this.value(fields['isVip'], itemScope, false, 'toc.fields.isVip'))),
+        isPay: NativeExpr.isTruthy((await this.value(fields['isPay'], itemScope, false, 'toc.fields.isPay'))),
         isVolume: isVolume,
-        tag: NativeExpr.toText(this.value(fields['tag'] || fields['updateTime'], itemScope, false,
-          'toc.fields.tag')).trim()
+        tag: NativeExpr.toText((await this.value(fields['tag'] || fields['updateTime'], itemScope, false,
+          'toc.fields.tag'))).trim()
       });
       if (chapters.length >= MAX_LIST_ITEMS || (limit > 0 && chapters.length >= limit)) return true;
     }
@@ -694,8 +696,8 @@ export class NativeSourceRunner {
   }
 
   /** nextUrl 的结果：一个地址是下一页；列表或多行文本是剩余全部分页。已补全、去重。 */
-  private nextUrls(spec: NativeValue, loaded: StagePage, field: string): string[] {
-    const raw = this.value(spec, loaded.scope, false, field);
+  private async nextUrls(spec: NativeValue, loaded: StagePage, field: string): Promise<string[]> {
+    const raw = (await this.value(spec, loaded.scope, false, field));
     const values: NativeValue[] = Array.isArray(raw) ? raw : NativeExpr.toText(raw).split(/\r?\n/);
     const urls: string[] = [];
     for (const value of values) {
@@ -712,11 +714,11 @@ export class NativeSourceRunner {
   }
 
   /** 把一页正文（文本或图片）追加到结果里，返回追加的字符数。 */
-  private appendContentPage(stage: NativeContentSpec, kind: string, loaded: StagePage, parts: string[],
-    imageUrls: string[]): number {
+  private async appendContentPage(stage: NativeContentSpec, kind: string, loaded: StagePage, parts: string[],
+    imageUrls: string[]): Promise<number> {
     if (kind === 'images') {
       let added = 0;
-      const images = this.value(stage.images, loaded.scope, true, 'content.images');
+      const images = (await this.value(stage.images, loaded.scope, true, 'content.images'));
       for (const image of Array.isArray(images) ? images : [images]) {
         const url = NativeExpr.resolveUrl(NativeExpr.toText(image).trim(), loaded.baseUrl);
         if (url) {
@@ -728,7 +730,7 @@ export class NativeSourceRunner {
       }
       return added;
     }
-    const text = this.value(stage.text, loaded.scope, false, 'content.text');
+    const text = (await this.value(stage.text, loaded.scope, false, 'content.text'));
     const added = Array.isArray(text) ?
       text.map((line: NativeValue): string => NativeExpr.toText(line)).join('\n') : NativeExpr.toText(text);
     parts.push(added);
@@ -752,18 +754,18 @@ export class NativeSourceRunner {
     const firstBase = firstPage.baseUrl;
     await this.runExtraFetches(stage.fetch, firstPage);
     if (kind === 'audio' || kind === 'video') {
-      const audio = this.firstLine(this.first(this.value(kind === 'audio' ? stage.audio : stage.video,
-        firstPage.scope, false, `content.${kind}`)));
-      if (!audio) throw new NativeSourceError(this.mediaFailure(stage, firstPage, kind));
+      const audio = this.firstLine(this.first((await this.value(kind === 'audio' ? stage.audio : stage.video,
+        firstPage.scope, false, `content.${kind}`))));
+      if (!audio) throw new NativeSourceError((await this.mediaFailure(stage, firstPage, kind)));
       return {
         kind: kind, text: NativeExpr.resolveUrl(audio, firstPage.baseUrl), baseUrl: firstPage.baseUrl,
         paragraphComments: [], chapterCommentUrl: '', links: [], images: [],
-        mediaHeaders: this.renderHeaders(stage.mediaHeaders, firstPage.scope), imageDecode: null
+        mediaHeaders: (await this.renderHeaders(stage.mediaHeaders, firstPage.scope)), imageDecode: null
       };
     }
     const parts: string[] = [];
     const imageUrls: string[] = [];
-    let size = this.appendContentPage(stage, kind, firstPage, parts, imageUrls);
+    let size = (await this.appendContentPage(stage, kind, firstPage, parts, imageUrls));
     const visited: Set<string> = new Set([firstBase, NativeExpr.resolveUrl(chapter.url, this.definition.url)]);
     const nextStage: NativeStageSpec = Object.assign({}, stage, { url: '= __url' });
     let loaded = firstPage;
@@ -771,7 +773,7 @@ export class NativeSourceRunner {
     let skipped = 0;
     while (stage.nextUrl && !stage.script) {
       if (this.cancelled()) return empty(firstBase);
-      const pending = this.nextUrls(stage.nextUrl, loaded, 'content.nextUrl')
+      const pending = (await this.nextUrls(stage.nextUrl, loaded, 'content.nextUrl'))
         .filter((url: string): boolean => !visited.has(url));
       if (pending.length === 0) break;
       if (page >= MAX_CONTENT_PAGES || size >= MAX_CONTENT_CHARS) {
@@ -784,7 +786,7 @@ export class NativeSourceRunner {
         loaded = await this.loadStage(nextStage, await pageScope(page, pending[0]), chapter.url, '正文');
         visited.add(loaded.baseUrl);
         await this.runExtraFetches(stage.fetch, loaded);
-        size += this.appendContentPage(stage, kind, loaded, parts, imageUrls);
+        size += (await this.appendContentPage(stage, kind, loaded, parts, imageUrls));
         continue;
       }
       // 一次给出多个地址表示“本章剩余全部分页”：按列出顺序分批并发请求，不再跟随这些页自己的 nextUrl。
@@ -798,11 +800,11 @@ export class NativeSourceRunner {
           break;
         }
         const batch = listed.slice(offset, offset + batchSize);
-        const pages = await Promise.all(batch.map(async (url: string, index: number): Promise<StagePage> =>
-          this.loadStage(nextStage, await pageScope(page + offset + index + 1, url), chapter.url, '正文')));
+        const pages = await Promise.all((await Promise.all(batch.map(async (url: string, index: number): Promise<StagePage> =>
+          (await this.loadStage(nextStage, await pageScope(page + offset + index + 1, url), chapter.url, '正文'))))));
         for (const listedPage of pages) {
           await this.runExtraFetches(stage.fetch, listedPage);
-          size += this.appendContentPage(stage, kind, listedPage, parts, imageUrls);
+          size += (await this.appendContentPage(stage, kind, listedPage, parts, imageUrls));
         }
       }
       break;
@@ -822,7 +824,7 @@ export class NativeSourceRunner {
     }
     const result: NativeContentResult = {
       kind: kind, text: text, baseUrl: firstBase, paragraphComments: [], chapterCommentUrl: '', links: [],
-      images: imageUrls, mediaHeaders: this.renderHeaders(stage.mediaHeaders, firstPage.scope),
+      images: imageUrls, mediaHeaders: (await this.renderHeaders(stage.mediaHeaders, firstPage.scope)),
       imageDecode: null
     };
     if (kind === 'images' && stage.imageDecode && firstPage) {
@@ -833,29 +835,29 @@ export class NativeSourceRunner {
         return bytes.map((byte: number): string => ((byte & 255) < 16 ? '0' : '') + (byte & 255).toString(16)).join('');
       };
       result.imageDecode = {
-        algorithm: NativeExpr.toText(this.template(decode.algorithm, firstPage.scope)).trim(),
-        key: toHex(this.value(decode.key, firstPage.scope, false, 'content.imageDecode.key')),
-        iv: decode.iv ? toHex(this.value(decode.iv, firstPage.scope, false, 'content.imageDecode.iv')) : ''
+        algorithm: NativeExpr.toText((await this.template(decode.algorithm, firstPage.scope))).trim(),
+        key: toHex((await this.value(decode.key, firstPage.scope, false, 'content.imageDecode.key'))),
+        iv: decode.iv ? toHex((await this.value(decode.iv, firstPage.scope, false, 'content.imageDecode.iv'))) : ''
       };
     }
     if (kind === 'text' && firstPage) {
       const links = stage.links || [];
       for (let i = 0; i < links.length; i++) {
         const link = links[i];
-        if (link.when && !NativeExpr.isTruthy(this.value(link.when, firstPage.scope, false,
-          `content.links[${i}].when`))) {
+        if (link.when && !NativeExpr.isTruthy((await this.value(link.when, firstPage.scope, false,
+          `content.links[${i}].when`)))) {
           continue;
         }
-        const label = NativeExpr.toText(this.template(link.label, firstPage.scope)).trim();
+        const label = NativeExpr.toText((await this.template(link.label, firstPage.scope))).trim();
         if (!label) continue;
         if (link.request && link.request.url) {
-          const request = this.buildRequest(link.request, firstPage.scope, '');
+          const request = (await this.buildRequest(link.request, firstPage.scope, ''));
           if (/^https?:\/\//i.test(request.url)) {
             result.links.push({ label: label, url: '', request: request, message: link.message || '' });
           }
           continue;
         }
-        const url = NativeExpr.resolveUrl(NativeExpr.toText(this.template(link.url || '', firstPage.scope)).trim(),
+        const url = NativeExpr.resolveUrl(NativeExpr.toText((await this.template(link.url || '', firstPage.scope))).trim(),
           firstPage.baseUrl);
         if (/^https?:\/\//i.test(url)) result.links.push({ label: label, url: url, request: null, message: '' });
       }
@@ -874,12 +876,12 @@ export class NativeSourceRunner {
 
   private async collectComments(spec: NativeCommentsSpec, page: StagePage, text: string,
     result: NativeContentResult): Promise<void> {
-    if (spec.when && !NativeExpr.isTruthy(this.value(spec.when, page.scope))) return;
+    if (spec.when && !NativeExpr.isTruthy((await this.value(spec.when, page.scope)))) return;
     const scope = page.scope.child();
     scope.set('stats', spec.stats ? await this.fetchValue(spec.stats, scope) : null);
     let total = 0;
     if (spec.paragraphUrl && spec.counts) {
-      const counts = this.value(spec.counts, scope);
+      const counts = (await this.value(spec.counts, scope));
       const lines = text.split('\n');
       const limit = Math.max(1, Math.min(Number(spec.max) || DEFAULT_COMMENT_BUBBLES, MAX_COMMENT_BUBBLES));
       const keys = counts && typeof counts === 'object' ? Object.keys(counts) : [];
@@ -894,20 +896,20 @@ export class NativeSourceRunner {
         if (!plain) continue;
         const para = { index: line, count: count, text: plain.length > 90 ? plain.substring(0, 90) : plain };
         const url = NativeExpr.resolveUrl(
-          NativeExpr.toText(this.template(spec.paragraphUrl, scope.child().set('para', para))).trim(), page.baseUrl);
+          NativeExpr.toText((await this.template(spec.paragraphUrl, scope.child().set('para', para)))).trim(), page.baseUrl);
         if (/^https?:\/\//i.test(url)) result.paragraphComments.push({ line: line, count: count, url: url });
       }
     }
     if (spec.chapterUrl) {
       const url = NativeExpr.resolveUrl(
-        NativeExpr.toText(this.template(spec.chapterUrl, scope.child().set('total', total))).trim(), page.baseUrl);
+        NativeExpr.toText((await this.template(spec.chapterUrl, scope.child().set('total', total)))).trim(), page.baseUrl);
       if (/^https?:\/\//i.test(url)) result.chapterCommentUrl = url;
     }
   }
 
   /** 发一个附加请求：响应是 JSON 时返回解析后的对象，否则返回文本；失败返回 null。 */
   private async fetchValue(spec: NativeRequestSpec, scope: NativeScope): Promise<NativeValue> {
-    const request = this.buildRequest(spec, scope, '');
+    const request = (await this.buildRequest(spec, scope, ''));
     if (!request.url) return null;
     try {
       const response = await this.host.fetch(request);
@@ -927,10 +929,10 @@ export class NativeSourceRunner {
     return stage;
   }
 
-  private renderHeaders(headers: Record<string, string> | undefined, scope: NativeScope): Record<string, string> {
+  private async renderHeaders(headers: Record<string, string> | undefined, scope: NativeScope): Promise<Record<string, string>> {
     const rendered: Record<string, string> = {};
     for (const name of Object.keys(headers || {})) {
-      const value = NativeExpr.toText(this.template((headers as Record<string, string>)[name], scope));
+      const value = NativeExpr.toText((await this.template((headers as Record<string, string>)[name], scope)));
       if (value) rendered[name] = value;
     }
     return rendered;
@@ -943,19 +945,19 @@ export class NativeSourceRunner {
     for (const name of Object.keys(caches)) {
       const spec = caches[name];
       let value: NativeValue = null;
-      if (!spec.when || NativeExpr.isTruthy(this.value(spec.when, scope))) {
+      if (!spec.when || NativeExpr.isTruthy((await this.value(spec.when, scope)))) {
         // 变量变了（换服务器、换账号）缓存就不该再用，所以把变量值算进键里。
         const key = `${name}\n${JSON.stringify(this.varValues)}`;
         const cached = this.host.cacheGet ? this.host.cacheGet(key) : undefined;
         if (cached !== undefined && cached !== null) {
           value = cached;
         } else {
-          const request = this.buildRequest(spec, scope, '');
+          const request = (await this.buildRequest(spec, scope, ''));
           if (request.url) {
             try {
               const response = await this.host.fetch(request);
               if (response.ok && response.body) {
-                value = this.value(spec.value, this.responseScope(scope, response.body, response.url || request.url));
+                value = (await this.value(spec.value, this.responseScope(scope, response.body, response.url || request.url)));
               }
             } catch (e) {
               value = null;
@@ -987,20 +989,20 @@ export class NativeSourceRunner {
       .set('login', this.credential)
       .set('form', {});
     await this.applyCaches(scope);
-    this.applyLets(this.definition.let, scope);
+    (await this.applyLets(this.definition.let, scope));
     return scope.child();
   }
 
-  private applyLets(lets: Record<string, NativeValue> | undefined, scope: NativeScope): void {
+  private async applyLets(lets: Record<string, NativeValue> | undefined, scope: NativeScope): Promise<void> {
     if (!lets) return;
-    for (const name of Object.keys(lets)) scope.set(name, this.value(lets[name], scope, false, `let.${name}`));
+    for (const name of Object.keys(lets)) scope.set(name, (await this.value(lets[name], scope, false, `let.${name}`)));
   }
 
   /** 请求一个阶段的页面并准备好求值环境；地址渲染为空时不发请求。reuse 见 StageReuse。 */
   private async loadStage(stage: NativeStageSpec, scope: NativeScope, defaultUrl: string, label: string,
     reuse: StageReuse = ''): Promise<StagePage> {
-    if (stage.script) return this.finishStage(stage, await this.loadScriptStage(stage, scope, label), label);
-    const request = this.buildRequest(stage, scope, defaultUrl, true);
+    if (stage.script) return (await this.finishStage(stage, await this.loadScriptStage(stage, scope, label), label));
+    const request = (await this.buildRequest(stage, scope, defaultUrl, true));
     let body = '';
     let baseUrl = request.url || NativeExpr.toText(scope.get('baseUrl'));
     if (request.url) {
@@ -1023,14 +1025,14 @@ export class NativeSourceRunner {
         if (reuse === 'keep') NativeSourceRunner.keepPage(key, body, baseUrl);
       }
     }
-    return this.finishStage(stage, { scope: this.responseScope(scope, body, baseUrl), baseUrl: baseUrl }, label);
+    return (await this.finishStage(stage, { scope: this.responseScope(scope, body, baseUrl), baseUrl: baseUrl }, label));
   }
 
   /** 页面到手之后：阶段的 let 与 fail。 */
-  private finishStage(stage: NativeStageSpec, page: StagePage, label: string): StagePage {
-    this.applyLets(stage.let, page.scope);
+  private async finishStage(stage: NativeStageSpec, page: StagePage, label: string): Promise<StagePage> {
+    (await this.applyLets(stage.let, page.scope));
     if (stage.fail) {
-      const failure = NativeExpr.toText(this.value(stage.fail, page.scope, false, 'fail')).trim();
+      const failure = NativeExpr.toText((await this.value(stage.fail, page.scope, false, 'fail'))).trim();
       if (failure && failure !== 'false') throw new NativeSourceError(`${label}接口返回失败：${failure}`);
     }
     return page;
@@ -1056,10 +1058,10 @@ export class NativeSourceRunner {
       cancelled: this.cancelled,
       builtin: (name: string, args: NativeValue[]): NativeValue => this.expr.callBuiltin(name, args, scope),
       getVar: (key: string): NativeValue => this.getVar(key),
-      setVar: (key: string, value: NativeValue): Promise<void> => this.setVar(key, value),
+      setVar: async (key: string, value: NativeValue): Promise<void> => (await this.setVar(key, value)),
       temp: this.temp,
       credential: (): NativeValue => ({ token: this.credential.token, user: this.credential.user }),
-      saveCredential: (token: string, user: string): Promise<void> => this.saveCredential(token, user),
+      saveCredential: async (token: string, user: string): Promise<void> => (await this.saveCredential(token, user)),
       keep: keep,
       interactive: interactive
     });
@@ -1227,22 +1229,22 @@ export class NativeSourceRunner {
     return `${label}接口返回空响应`;
   }
 
-  private buildRequest(spec: NativeRequestSpec, scope: NativeScope, defaultUrl: string,
-    primary: boolean = false): NativeRequest {
-    const rawUrl = spec.url === undefined ? defaultUrl : NativeExpr.toText(this.template(spec.url, scope));
+  private async buildRequest(spec: NativeRequestSpec, scope: NativeScope, defaultUrl: string,
+    primary: boolean = false): Promise<NativeRequest> {
+    const rawUrl = spec.url === undefined ? defaultUrl : NativeExpr.toText((await this.template(spec.url, scope)));
     const url = NativeExpr.resolveUrl(rawUrl.trim(), this.definition.url);
     const headers: Record<string, string> = {};
     for (const name of Object.keys(spec.headers || {})) {
-      const value = NativeExpr.toText(this.template((spec.headers as Record<string, string>)[name], scope));
+      const value = NativeExpr.toText((await this.template((spec.headers as Record<string, string>)[name], scope)));
       if (value) headers[name] = value;
     }
     let body = '';
     if (spec.body !== undefined && spec.body !== null) {
-      body = typeof spec.body === 'string' ? NativeExpr.toText(this.template(spec.body, scope)) :
-        JSON.stringify(this.renderDeep(spec.body, scope));
+      body = typeof spec.body === 'string' ? NativeExpr.toText((await this.template(spec.body, scope))) :
+        JSON.stringify((await this.renderDeep(spec.body, scope)));
     }
     // 请求方法也按模板求值，可以随分类、变量切换 GET/POST。
-    const rendered = spec.method ? NativeExpr.toText(this.template(spec.method, scope)).trim() : '';
+    const rendered = spec.method ? NativeExpr.toText((await this.template(spec.method, scope))).trim() : '';
     const method = (rendered || (body ? 'POST' : 'GET')).toUpperCase();
     if (!/^[A-Z]+$/.test(method)) throw new NativeSourceError(`请求方法无效：${rendered}`);
     const web = spec.webView && typeof spec.webView === 'object' ? spec.webView : null;
@@ -1256,12 +1258,12 @@ export class NativeSourceRunner {
     };
   }
 
-  private renderDeep(value: NativeValue, scope: NativeScope): NativeValue {
-    if (typeof value === 'string') return this.template(value, scope);
-    if (Array.isArray(value)) return value.map((item: NativeValue): NativeValue => this.renderDeep(item, scope));
+  private async renderDeep(value: NativeValue, scope: NativeScope): Promise<NativeValue> {
+    if (typeof value === 'string') return (await this.template(value, scope));
+    if (Array.isArray(value)) return (await Promise.all(value.map(async (item: NativeValue): Promise<NativeValue> => (await this.renderDeep(item, scope)))));
     if (value && typeof value === 'object') {
       const out: Record<string, NativeValue> = {};
-      for (const key of Object.keys(value)) out[key] = this.renderDeep(value[key], scope);
+      for (const key of Object.keys(value)) out[key] = (await this.renderDeep(value[key], scope));
       return out;
     }
     return value;
@@ -1274,7 +1276,7 @@ export class NativeSourceRunner {
       const spec: NativeFetchSpec = fetches[name];
       let result: NativeValue = null;
       // 附加请求只是补充数据，失败时变量为 null，由规则自行决定如何降级。
-      if (!spec.when || NativeExpr.isTruthy(this.value(spec.when, loaded.scope))) {
+      if (!spec.when || NativeExpr.isTruthy((await this.value(spec.when, loaded.scope)))) {
         result = await this.fetchValue(spec, loaded.scope);
       }
       loaded.scope.set(name, result);
@@ -1282,10 +1284,10 @@ export class NativeSourceRunner {
   }
 
   /** 音频/视频地址为空时的原因：书源写的 mediaError 优先，否则取附加请求、主请求里第一个报错的 code/message。 */
-  private mediaFailure(stage: NativeContentSpec, loaded: StagePage, kind: string): string {
+  private async mediaFailure(stage: NativeContentSpec, loaded: StagePage, kind: string): Promise<string> {
     const label = kind === 'audio' ? '音频' : '视频';
     if (stage.mediaError) {
-      const custom = NativeExpr.toText(this.value(stage.mediaError, loaded.scope, false, 'content.mediaError')).trim();
+      const custom = NativeExpr.toText((await this.value(stage.mediaError, loaded.scope, false, 'content.mediaError'))).trim();
       if (custom) return custom;
     }
     const responses: NativeValue[] = Object.keys(stage.fetch || {})
@@ -1318,41 +1320,41 @@ export class NativeSourceRunner {
     return message ? `${message}（code=${codeText}）` : `code=${codeText}`;
   }
 
-  private readBooks(stage: NativeStageSpec, loaded: StagePage, prefix: string): NativeBookRecord[] {
+  private async readBooks(stage: NativeStageSpec, loaded: StagePage, prefix: string): Promise<NativeBookRecord[]> {
     const books: NativeBookRecord[] = [];
-    const items = this.listItems(stage.list || '', loaded.scope, loaded.baseUrl, `${prefix}.list`);
+    const items = (await this.listItems(stage.list || '', loaded.scope, loaded.baseUrl, `${prefix}.list`));
     for (let i = 0; i < items.length; i++) {
       const itemScope = loaded.scope.child().set('item', items[i]).set('index', i);
-      const book = this.readBook(stage.fields || {}, itemScope, loaded.baseUrl, prefix);
+      const book = (await this.readBook(stage.fields || {}, itemScope, loaded.baseUrl, prefix));
       if (book.name && book.bookUrl) books.push(book);
     }
     return books;
   }
 
-  private readBook(fields: Record<string, NativeValue>, scope: NativeScope, baseUrl: string,
-    prefix: string): NativeBookRecord {
-    const text = (name: string): string => {
-      const value = this.value(fields[name], scope, false, `${prefix}.fields.${name}`);
+  private async readBook(fields: Record<string, NativeValue>, scope: NativeScope, baseUrl: string,
+    prefix: string): Promise<NativeBookRecord> {
+    const text = async (name: string): Promise<string> => {
+      const value = (await this.value(fields[name], scope, false, `${prefix}.fields.${name}`));
       return (Array.isArray(value) ? value.map((part: NativeValue): string => NativeExpr.toText(part).trim())
         .filter((part: string): boolean => !!part).join(',') : NativeExpr.toText(value)).trim();
     };
-    const url = (name: string): string => NativeExpr.resolveUrl(this.firstLine(this.first(
-      this.value(fields[name], scope, false, `${prefix}.fields.${name}`))), baseUrl);
+    const url = async (name: string): Promise<string> => NativeExpr.resolveUrl(this.firstLine(this.first(
+      (await this.value(fields[name], scope, false, `${prefix}.fields.${name}`)))), baseUrl);
     const typeSpec = fields['type'];
     const literalType = typeof typeSpec === 'string' && /^(text|audio|comic|image|video)$/i.test(typeSpec.trim());
     return {
-      name: text('name'),
-      author: text('author'),
-      kind: text('kind'),
-      intro: text('intro'),
-      coverUrl: this.definition.coverDecode ? SourceCoverUrl.wrap(url('coverUrl'), this.definition.url) : url('coverUrl'),
-      wordCount: text('wordCount'),
-      lastChapter: text('lastChapter'),
-      updateTime: text('updateTime'),
-      status: text('status'),
-      bookUrl: url('bookUrl'),
-      tocUrl: url('tocUrl'),
-      type: (literalType ? String(typeSpec).trim() : text('type')).toLowerCase(),
+      name: (await text('name')),
+      author: (await text('author')),
+      kind: (await text('kind')),
+      intro: (await text('intro')),
+      coverUrl: this.definition.coverDecode ? SourceCoverUrl.wrap((await url('coverUrl')), this.definition.url) : (await url('coverUrl')),
+      wordCount: (await text('wordCount')),
+      lastChapter: (await text('lastChapter')),
+      updateTime: (await text('updateTime')),
+      status: (await text('status')),
+      bookUrl: (await url('bookUrl')),
+      tocUrl: (await url('tocUrl')),
+      type: (literalType ? String(typeSpec).trim() : (await text('type'))).toLowerCase(),
       keep: {}
     };
   }
@@ -1373,13 +1375,21 @@ export class NativeSourceRunner {
     return Array.isArray(value) ? (value.length > 0 ? value[0] : '') : value;
   }
 
-  private listItems(rule: string, scope: NativeScope, baseUrl: string, field: string = ''): NativeValue[] {
+  private async expression(text: string, scope: NativeScope, template: boolean = false): Promise<NativeValue> {
+    if (this.definition.js && this.host.evaluateExpression) {
+      return this.host.evaluateExpression(this.definition.js, this.definition.lib || '', text, scope.snapshot(),
+        template, this.cancelled);
+    }
+    return template ? this.expr.render(text, scope) : this.expr.evaluate(text, scope);
+  }
+
+  private async listItems(rule: string, scope: NativeScope, baseUrl: string, field: string = ''): Promise<NativeValue[]> {
     const spec = (rule || '').trim();
     if (!spec) return [];
     let items: NativeValue[];
     try {
       if (spec.startsWith('=')) {
-        const value = this.expr.evaluate(spec.substring(1), scope);
+        const value = (await this.expression(spec.substring(1), scope));
         items = Array.isArray(value) ? value : (value === null || value === undefined || value === '' ? [] : [value]);
       } else {
         const current = scope.get('item');
@@ -1426,18 +1436,18 @@ export class NativeSourceRunner {
   }
 
   /** 模板位置（地址、请求头、标题）：= 开头按表达式，其余按 {{ }} 模板。 */
-  private template(spec: NativeValue, scope: NativeScope): NativeValue {
+  private async template(spec: NativeValue, scope: NativeScope): Promise<NativeValue> {
     if (typeof spec !== 'string') return spec;
     const text = spec.trim();
-    if (text.startsWith('=')) return this.expr.evaluate(text.substring(1), scope);
-    return this.expr.render(spec, scope);
+    if (text.startsWith('=')) return (await this.expression(text.substring(1), scope));
+    return (await this.expression(spec, scope, true));
   }
 
   /** 字段位置的求值。field 给出规则在定义里的位置，出错时用来定位，调试时用来记录。 */
-  private value(spec: NativeValue, scope: NativeScope, list: boolean = false, field: string = ''): NativeValue {
+  private async value(spec: NativeValue, scope: NativeScope, list: boolean = false, field: string = ''): Promise<NativeValue> {
     let result: NativeValue;
     try {
-      result = this.rawValue(spec, scope, list);
+      result = (await this.rawValue(spec, scope, list));
     } catch (e) {
       throw this.fieldError(field, spec, e);
     }
@@ -1446,12 +1456,12 @@ export class NativeSourceRunner {
   }
 
   /** 字段位置：= 开头按表达式，含 {{ }} 按模板，其余按选择器规则在当前元素上取值。 */
-  private rawValue(spec: NativeValue, scope: NativeScope, list: boolean = false): NativeValue {
+  private async rawValue(spec: NativeValue, scope: NativeScope, list: boolean = false): Promise<NativeValue> {
     if (spec === undefined || spec === null || spec === '') return list ? [] : '';
     if (typeof spec !== 'string') return spec;
     const text = spec.trim();
-    if (text.startsWith('=')) return this.expr.evaluate(text.substring(1), scope);
-    if (text.indexOf('{{') >= 0) return this.expr.render(spec, scope);
+    if (text.startsWith('=')) return (await this.expression(text.substring(1), scope));
+    if (text.indexOf('{{') >= 0) return (await this.expression(spec, scope, true));
     const current = scope.get('item');
     const jsonValue = this.jsonRule(text, current, list);
     if (jsonValue !== null) return jsonValue;

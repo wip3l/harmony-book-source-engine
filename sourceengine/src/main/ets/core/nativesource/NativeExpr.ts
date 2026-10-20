@@ -78,6 +78,11 @@ export class NativeScope {
   child(): NativeScope {
     return new NativeScope(this);
   }
+
+  /** JSON snapshot for an isolated asynchronous expression host. */
+  snapshot(): Record<string, NativeValue> {
+    return Object.assign(this.parent ? this.parent.snapshot() : {}, this.values);
+  }
 }
 
 interface Token {
