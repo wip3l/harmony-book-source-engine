@@ -493,7 +493,7 @@ export class NativeSourceRunner {
       const options = Array.isArray(item.options) ? item.options.map((option: string): string => String(option)) : [];
       const fallback = item.default !== undefined ? String(item.default) : (options.length > 0 ? options[0] : '');
       const saved = stored && stored[item.key] !== undefined && stored[item.key] !== null ? String(stored[item.key]) : '';
-      values[item.key] = saved && (options.length === 0 || options.indexOf(saved) >= 0) ? saved : fallback;
+      values[item.key] = saved && (item.optionsScript || options.length === 0 || options.indexOf(saved) >= 0) ? saved : fallback;
     }
     return values;
   }
