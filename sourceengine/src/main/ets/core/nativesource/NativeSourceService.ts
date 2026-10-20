@@ -582,8 +582,8 @@ export class NativeSourceService {
   }
 
   /** 书源设置页的动态选项（vars 里写了 optionsScript 的变量）。 */
-  static async varOptions(source: BookSource, http: HttpClient): Promise<Record<string, NativeVarOptions>> {
-    return await NativeSourceService.runner(source, http, (): boolean => false).varOptions();
+  static async varOptions(source: BookSource, http: HttpClient, key: string = ''): Promise<Record<string, NativeVarOptions>> {
+    return await NativeSourceService.runner(source, http, (): boolean => false).varOptions(key);
   }
 
   static async submitLogin(source: BookSource, http: HttpClient,

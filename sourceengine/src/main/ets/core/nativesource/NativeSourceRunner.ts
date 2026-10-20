@@ -394,9 +394,10 @@ export class NativeSourceRunner {
    * 书源设置页的动态选项：vars 里写了 optionsScript 的变量，运行对应函数取选项列表。
    * 函数失败时给出原因，设置页退回到 options 里写死的选项。
    */
-  async varOptions(): Promise<Record<string, NativeVarOptions>> {
+  async varOptions(key: string = ''): Promise<Record<string, NativeVarOptions>> {
     const result: Record<string, NativeVarOptions> = {};
-    const specs = (this.definition.vars || []).filter((item: NativeVarSpec): boolean => !!item.optionsScript);
+    const specs = (this.definition.vars || []).filter((item: NativeVarSpec): boolean =>
+      !!item.optionsScript && (!key || item.key === key));
     if (specs.length === 0) return result;
     const scope = await this.baseScope();
     for (const item of specs) {
@@ -1376,7 +1377,7 @@ export class NativeSourceRunner {
   }
 
   private async expression(text: string, scope: NativeScope, template: boolean = false): Promise<NativeValue> {
-    if (this.definition.js && this.host.evaluateExpression) {
+    if (this.definition.js && this.host.evaluateExpression && this.expr.requiresScript(text, template)) {
       return this.host.evaluateExpression(this.definition.js, this.definition.lib || '', text, scope.snapshot(),
         template, this.cancelled);
     }

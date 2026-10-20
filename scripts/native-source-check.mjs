@@ -26,6 +26,17 @@ try {
     .set('vars', { mode: '听书' }).set('baseUrl', 'https://example.com/a/b.html');
   const ev = (source) => expr.evaluate(source, scope);
 
+  const dependency = new NativeExpr(host).loadLibrary('fn pure(x) { return str(x); } fn nested(x) { return custom(x); } fn recursive(x) { if (x) { return recursive(x-1); } return nested(x); }');
+  equal(dependency.requiresScript('静态分类', true), false, '静态模板不启动 JS');
+  equal(dependency.requiresScript('{{(page-1)*30}}/{{urlencode(key)}}', true), false, '内置函数模板不启动 JS');
+  equal(dependency.requiresScript("$.url ? replaceText(absUrl($.url, baseUrl), '{{page}}', str(page)) : ''"), false, '动态菜单普通表达式不启动 JS');
+  equal(dependency.requiresScript('pure(page)'), false, '纯 lib 函数沿原解释器执行');
+  equal(dependency.requiresScript('recursive(page)'), true, '追踪 lib 递归到 JS 函数');
+  equal(dependency.requiresScript('map([1,2], x => custom(x))'), true, '回调中 JS 调用仍进入沙箱');
+  equal(dependency.requiresScript("{{tojson({a: custom('}}')})}}", true), true, '按模板语法检查嵌套对象和字符串');
+  dependency.loadLibrary('fn nested(x) { return str(x); }');
+  equal(dependency.requiresScript('nested(page)'), false, '更换 lib 后清理依赖缓存');
+
   equal(ev('1 + 2 * 3'), 7, '算术优先级');
   equal(ev('(page - 1) * 10'), 20, '括号与变量');
   equal(ev("'a' + 1 + null"), 'a1', '字符串拼接，null 视为空');

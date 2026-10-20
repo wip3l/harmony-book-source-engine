@@ -719,6 +719,7 @@ export class NativeExpr {
   private depth: number = 0;
   private library: Map<string, FunctionDecl> = new Map();
   private script: NativeScriptLibrary | null = null;
+  private scriptDependencies: Map<string, boolean> = new Map();
 
   constructor(host: NativeExprHost) {
     this.host = host;
@@ -768,6 +769,7 @@ export class NativeExpr {
   /** 载入书源的函数库，之后的表达式可以直接调用其中的函数。 */
   loadLibrary(source: string | undefined): NativeExpr {
     this.library = new Map();
+    this.scriptDependencies.clear();
     if (!source || !source.trim()) return this;
     for (const fn of NativeExpr.parseLibrary(source)) this.library.set(fn.name, fn);
     return this;
@@ -777,6 +779,41 @@ export class NativeExpr {
   loadScript(script: NativeScriptLibrary | null): NativeExpr {
     this.script = script;
     return this;
+  }
+
+  /** Inspect the parsed expression without evaluating it. Only JS calls need an isolated script host. */
+  requiresScript(source: string, template: boolean = false): boolean {
+    const key = (template ? 't:' : 'e:') + source;
+    const cached = this.scriptDependencies.get(key);
+    if (cached !== undefined) return cached;
+    const nodes: Node[] = template ? NativeExpr.splitTemplate(source)
+      .filter((part): boolean => part.expr).map((part): Node => parseExpression(part.text)) : [parseExpression(source)];
+    const functions: Set<string> = new Set();
+    let required = false;
+    let visited = 0;
+    while (nodes.length > 0) {
+      // Large/ambiguous dependency graphs stay in the bounded script host.
+      if (++visited > 10000) { required = true; break; }
+      const node = nodes.pop() as Node;
+      if (node.t === 'call') {
+        const name = node.name as string;
+        const fn = this.library.get(name);
+        if (fn) {
+          if (!functions.has(name)) { functions.add(name); nodes.push(fn.body); }
+        } else if (BUILTIN_NAMES.indexOf(name) < 0) {
+          required = true;
+          break;
+        }
+      }
+      if (node.a) nodes.push(node.a);
+      if (node.b) nodes.push(node.b);
+      if (node.c) nodes.push(node.c);
+      if (node.args) for (const child of node.args) nodes.push(child);
+      if (node.keys) for (const child of node.keys) nodes.push(child);
+    }
+    if (this.scriptDependencies.size >= AST_CACHE_LIMIT) this.scriptDependencies.clear();
+    this.scriptDependencies.set(key, required);
+    return required;
   }
 
   /** 供 JS 里的 native.名称 调用内置函数；scope 是发起调用的那条表达式的作用域。 */
