@@ -320,7 +320,7 @@ export {
 } from './src/main/ets/utils/Sleep';
 
 export {
-  SourceCookieJar, SourceRateWaiter, SourceRequestScheduler, SourceScriptExecutor,
+  SourceCookieJar, SourceRateWaiter, SourceRequestScheduler, SourceScriptExecutor, SourceNativeScripts,
   SourceWebSession, SourceExecutionState, SourceDiagnostics, SourceEngineHostAdapter, SourceEngineHost
 } from './src/main/ets/core/host/SourceEngineHost';
 export { NativeSourceImport } from './src/main/ets/core/nativesource/NativeSourceImport';
