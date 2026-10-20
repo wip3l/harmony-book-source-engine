@@ -1324,23 +1324,64 @@ export class NativeSourceRunner {
   private async readBooks(stage: NativeStageSpec, loaded: StagePage, prefix: string): Promise<NativeBookRecord[]> {
     const books: NativeBookRecord[] = [];
     const items = (await this.listItems(stage.list || '', loaded.scope, loaded.baseUrl, `${prefix}.list`));
+    let scriptValues: Record<string, NativeValue>[] = [];
     for (let i = 0; i < items.length; i++) {
+      if (i % 16 === 0) scriptValues = await this.readScriptFields(stage.fields || {}, loaded.scope,
+        items.slice(i, i + 16), i, prefix);
       const itemScope = loaded.scope.child().set('item', items[i]).set('index', i);
-      const book = (await this.readBook(stage.fields || {}, itemScope, loaded.baseUrl, prefix));
+      const book = (await this.readBook(stage.fields || {}, itemScope, loaded.baseUrl, prefix,
+        scriptValues[i % 16] || {}));
       if (book.name && book.bookUrl) books.push(book);
     }
     return books;
   }
 
+  /** Batch pure JS field expressions so a page does not serialize the full response once per field. */
+  private async readScriptFields(fields: Record<string, NativeValue>, scope: NativeScope,
+    items: NativeValue[] | null, offset: number, prefix: string): Promise<Record<string, NativeValue>[]> {
+    if (!this.definition.js || !this.host.evaluateExpression) return [];
+    const pairs: string[] = [];
+    for (const name of BOOK_FIELD_NAMES) {
+      const rule = fields[name];
+      if (typeof rule !== 'string' || !rule.trim().startsWith('=')) continue;
+      const expression = rule.trim().substring(1);
+      if (this.expr.requiresScript(expression)) pairs.push(`${JSON.stringify(name)}:(${expression})`);
+    }
+    if (!pairs.length) return [];
+    const record = `{${pairs.join(',')}}`;
+    try {
+      if (!items) return [(await this.expression(record, scope)) as Record<string, NativeValue>];
+      let rows = '__nativeRows';
+      while (scope.has(rows) || record.indexOf(rows) >= 0) rows += '_';
+      let row = '__nativeRow';
+      while (scope.has(row) || record.indexOf(row) >= 0 || row === rows) row += '_';
+      const batch = items.map((item: NativeValue, index: number): NativeValue => ({ item, index: offset + index }));
+      // Nested scopes preserve the ordinary item/index semantics, including JSONPath and native callbacks.
+      const expression = `map(${rows}, ${row} => map([${row}.item], item => map([${row}.index], index => ${record})[0])[0])`;
+      return (await this.expression(expression, scope.child().set(rows, batch))) as Record<string, NativeValue>[];
+    } catch (error) {
+      throw this.fieldError(`${prefix}.fields`, record, error);
+    }
+  }
+
   private async readBook(fields: Record<string, NativeValue>, scope: NativeScope, baseUrl: string,
-    prefix: string): Promise<NativeBookRecord> {
+    prefix: string, scriptValues?: Record<string, NativeValue>): Promise<NativeBookRecord> {
+    const scripted = scriptValues || (await this.readScriptFields(fields, scope, null, 0, prefix))[0] || {};
+    const read = async (name: string): Promise<NativeValue> => {
+      if (!Object.prototype.hasOwnProperty.call(scripted, name)) {
+        return await this.value(fields[name], scope, false, `${prefix}.fields.${name}`);
+      }
+      const value = scripted[name];
+      this.traceRule(`${prefix}.fields.${name}`, fields[name], value, false, scope);
+      return value;
+    };
     const text = async (name: string): Promise<string> => {
-      const value = (await this.value(fields[name], scope, false, `${prefix}.fields.${name}`));
+      const value = await read(name);
       return (Array.isArray(value) ? value.map((part: NativeValue): string => NativeExpr.toText(part).trim())
         .filter((part: string): boolean => !!part).join(',') : NativeExpr.toText(value)).trim();
     };
     const url = async (name: string): Promise<string> => NativeExpr.resolveUrl(this.firstLine(this.first(
-      (await this.value(fields[name], scope, false, `${prefix}.fields.${name}`)))), baseUrl);
+      (await read(name)))), baseUrl);
     const typeSpec = fields['type'];
     const literalType = typeof typeSpec === 'string' && /^(text|audio|comic|image|video)$/i.test(typeSpec.trim());
     return {
