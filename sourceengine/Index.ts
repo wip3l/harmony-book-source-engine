@@ -321,7 +321,7 @@ export {
 
 export {
   SourceCookieJar, SourceRateWaiter, SourceRequestScheduler, SourceScriptExecutor, SourceNativeScripts,
-  SourceWebSession, SourceExecutionState, SourceDiagnostics, SourceEngineHostAdapter, SourceEngineHost
+  SourceWebSession, SourceExecutionState, SourceDiagnostics, SourceImageScripts, SourceEngineHostAdapter, SourceEngineHost
 } from './src/main/ets/core/host/SourceEngineHost';
 export { NativeSourceImport } from './src/main/ets/core/nativesource/NativeSourceImport';
 export { SourceCoverUrl } from './src/main/ets/core/nativesource/SourceCoverUrl';

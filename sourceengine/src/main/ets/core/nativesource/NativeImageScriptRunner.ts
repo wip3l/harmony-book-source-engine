@@ -1,5 +1,6 @@
 import { JSScriptSession, JSScriptSessionOptions } from '@devzeng/quickjs';
 import { NativeSourceCrypto } from './NativeSourceCrypto';
+import { SourceEngineHost } from '../host/SourceEngineHost';
 
 export interface NativeImageScriptContext {
   url: string;
@@ -41,6 +42,8 @@ export class NativeImageScriptRunner {
     const code = this.program(js, fn, context);
     if (!input.length || input.length > this.MAX_BYTES) throw new Error('图片脚本输入须为 1 字节至 20 MiB');
     if (cancelled()) throw new Error('书源请求已取消');
+    const executor = SourceEngineHost.imageScripts();
+    if (executor) return await executor.run(code, input, cancelled);
     // At most four downloaded buffers are retained; only one runtime is active.
     if (this.queue.length + (this.active ? 1 : 0) >= 4) throw new Error('图片脚本队列已满，请稍后重试');
     const ticket = ++this.sequence;
