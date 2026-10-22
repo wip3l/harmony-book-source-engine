@@ -14,7 +14,7 @@
 | 简听的导入限制、安全预算、UI 和缓存 | [简听宿主说明](https://github.com/end-web/HarmonyOS-book/blob/main/docs/BOOK_SOURCE_RULES.md) |
 | 封面解密 | 本文 `coverDecode` 字段；宿主还需接入 [SourceCoverLoader](cover-decoding.md)，不能仅靠更新文档或 JSON 获得显示能力 |
 
-迁移时轻页参考版本为 4.0.919，本文最近一次按代码核对时轻页为 4.1.924（2026-10-20）。下文保留的轻页 UI、视频和调试能力不代表所有宿主均已实现。简听与轻页（4.0.921 起）都已接入封面解密。
+迁移时轻页参考版本为 4.0.919，本文最近一次按代码核对时轻页为 4.2.925（2026-10-20）。下文保留的轻页 UI、视频和调试能力不代表所有宿主均已实现。简听与轻页（4.0.921 起）都已接入封面解密。
 
 > 示例只使用 `example.com`、本地测试服务和虚构数据，不发布实际站点书源或登录凭据。
 
@@ -472,7 +472,18 @@ fn sign(path, ts) {
 
 固定 IV 示例：`"iv": "000102030405060708090a0b0c0d0e0f"`，此时删除 `ivPrefixBytes`。
 图片地址仍由 `fields.coverUrl` 提取；HTML 延迟加载图片可使用 `img@data-src`，JSON 则使用对应字段规则。
-正文漫画现有的 `content.imageDecode` 有独立语义，不能把 `coverDecode` 的字段直接套到正文配置中。
+正文漫画的 `content.imageDecode` 也支持 `ivPrefixBytes:16` 和显式 `keyEncoding`，但它的 key/iv 可按章求值；固定 IV 仍须通过 `= hexBytes('…')` 转为字节，不能直接套用封面固定 IV 的写法。详见正文小节。
+
+封面请求会继承顶层 `headers` 中的 `Accept`、`Accept-Language`、`User-Agent`、`Referer`、`Origin`、`Cookie`、`Authorization`。可用顶层 `coverHeaders` 单独覆盖（头名称不区分大小写），普通封面和加密封面均适用：
+
+```json
+"coverHeaders": {
+  "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+  "Referer": "= source.url + '/'"
+}
+```
+
+请求头支持表达式和模板，在搜索、发现、详情解析封面时求值。带请求头的封面经应用下载缓存；头参数参与缓存标识，只在本地地址片段中传递，不作为图片 HTTP 地址发送。修改源后重新获取书籍信息以更新封面参数。未设置语言头时，应用封面下载默认使用 `zh-CN,zh;q=0.9,en;q=0.8`。
 
 输入最多 8 MiB，支持加密封面与普通图片混用。解密后检查 JPEG/PNG/GIF/BMP/WebP/AVIF/HEIF 文件头；密钥长度在导入时即校验，非法密钥、截断密文或非图片结果返回错误。
 引擎输出 `#source-cover-v1=` 标记，片段只携带书源标识，不保存密钥或账号。
@@ -673,6 +684,7 @@ fn sign(path, ts) {
 ```
 
 - `menus` 是固定分类。没有 `url` 的条目是分组标题，`when` 为假时该条目隐藏。条目可以带 `headers`，只在打开这个分类时附加，适合个人书架这类需要登录凭据的分类。条目也可以带自己的 `method`、`body`，不写时沿用 `explore` 上的；`body` 写空串表示这个分类不带请求体。这样一个书源可以同时对接 GET 和 POST 两种接口，例如 `{ "title": "筛选", "url": "{{server}}/filter", "method": "POST", "body": "= tojson({page: page, sort: 'hot'})" }`。
+- 每个菜单还可设置自己的 `list`、`fields`；两者分别回退到 `explore` 的同名配置。设置 `fields` 时整组替换，不逐字段合并，仍须包含 `name`、`bookUrl`。例如 `{ "title": "VIP", "url": "/api/home", "list": "$.data.vipList[*]", "fields": { "name": "$.title", "bookUrl": "$.url" } }`。所有可点击菜单都提供完整规则时，可以省略全局 `list/fields`；动态分类仍使用全局规则。
 - `dynamicMenus` 从接口取分类。`target` 在打开分类时才求值，所以里面可以用 `page`；求值为空的条目作为分组标题。
 - `list` 和 `fields` 与搜索相同。
 
@@ -705,6 +717,10 @@ fn sign(path, ts) {
 ```
 
 ### 目录 `toc`
+
+目录第一页地址按以下顺序选择：显式 `toc.url` 的求值结果 → 未配置 `toc.url` 时使用 `book.tocUrl`（通常由 `detail.fields.tocUrl` 保存）→ `book.bookUrl`。引擎不会自动把两个配置拼接。若详情已经保存完整目录地址，可省略 `toc.url` 或写 `= book.tocUrl`；需要从书籍地址构造时写 `= book.bookUrl + '/chapters'`。不要再给已经含 `/chapters` 的 `book.tocUrl` 追加相同后缀。调试明细的 `toc.url` 会记录实际解析出的请求地址，地址表达式抛错时也会标明该字段。
+
+书籍详情地址统一使用 `book.bookUrl`，不提供 `book.url` 别名。表达式或模板误用 `book.url`（包括 `book['url']` 和 `get(book, 'url')`）时，会提示「book.url 不存在，请使用 book.bookUrl（书籍详情地址）；目录地址请使用 book.tocUrl」，阻止继续请求错误地址。普通接口数据或 `book.vars` 中可选字段缺失时仍保留原来的空值/回退语义。
 
 | 字段 | 说明 |
 |---|---|
@@ -774,7 +790,70 @@ fn sign(path, ts) {
 
 - `algorithm` 支持 AES 和 3DES 的 ECB、CBC、CTR、OFB、CFB 模式。`key`、`iv` 可以是文本（按 UTF-8）或字节。
 - 一章里的图片共用同一组参数。下载到的内容本身已经是图片时不解密。
+- 不写 `keyEncoding` 时保留既有规则语义：固定文本须写成 `"key": "= '0123456789abcdef'"`，十六进制密钥可写成 `"key": "= hexBytes(d.key)"`。裸文本是选择器，不是密钥字面值；求值为空会明确报错。
+- 显式设置 `keyEncoding: "utf8"` 或 `"hex"` 后，`key` 接受字面文本、模板或表达式，并按指定编码转换。hex 必须是完整的十六进制字节。静态密钥在导入时校验长度，动态密钥在取正文时校验；AES 支持 16/24/32 字节，3DES 为 24 字节。
 - 只能做标准的对称解密。按规律打乱像素块这类自定义混淆做不了。
+
+每张图片独立随机 IV、文件前 16 字节存放 IV 时，可以省略 `iv` 并添加 `ivPrefixBytes:16`：
+
+```json
+"content": {
+  "images": "= map(data.images, x => x.url)",
+  "imageDecode": {
+    "algorithm": "AES/CBC/PKCS7Padding",
+    "key": "0123456789abcdef0123456789abcdef",
+    "keyEncoding": "utf8",
+    "ivPrefixBytes": 16
+  }
+}
+```
+
+示例密钥仅用于说明格式，请换成实际密钥。`ivPrefixBytes` 只接受数字 `16`，不能同时声明 `iv`（空字符串也不允许），算法限 AES/CBC/PKCS5Padding 或 PKCS7Padding。每张图片独立截取 IV，章内只共用密钥；普通 JPEG/PNG/GIF/BMP/WebP/AVIF/HEIF 会直接保存，允许加密与明文混合。单张下载仍限 20 MiB、每批最多 4 张并发，使用异步系统加密接口。截断密文、错误密钥或解密后不是支持的图片时，阅读加载返回「正文图片解密失败」，不把密文地址交给图片控件。解密参数和请求头都参与图片缓存标识；不写新字段的原有固定 IV、AES/3DES 及其他模式保持兼容。
+
+#### 自定义图片字节脚本
+
+标准算法配置不足以描述文件格式时，可把 `content.imageDecode` 改为脚本形式。函数定义在书源已有的顶层 `js` 中：
+
+```json
+{
+  "js": "function decodeImage(bytes, ctx) { const iv = Array.from(bytes.subarray(0, 16), b => b.toString(16).padStart(2, '0')).join(''); return image.decrypt('AES/CBC/PKCS7Padding', bytes.subarray(16), ctx.params.key, iv); }",
+  "content": {
+    "images": "= data.images",
+    "imageDecode": {
+      "script": "decodeImage",
+      "params": { "key": "= data.imageKey" }
+    }
+  }
+}
+```
+
+这是合并到完整书源中的片段。示例要求 `data.imageKey` 是十六进制密钥；前 16 字节是 IV。该格式也可直接用前述 `ivPrefixBytes` 配置。脚本适合额外存在自定义头、异或、字节重排或多步加解密的格式。
+
+函数签名为 `decodeImage(bytes, ctx)`。`bytes` 是下载到的 `Uint8Array`；返回 `Uint8Array`、`Int8Array`、`Uint8ClampedArray` 或 `ArrayBuffer`，切片按实际偏移和长度读取。字符串、数字数组、16/32 位数组、空返回值不接受。允许已经能在脚本内部完成的 Promise/async 计算，不提供定时器。最终结果必须是受支持图片文件的完整字节，不支持直接返回像素/RGBA 数据或 Canvas 对象。
+
+| 上下文/配置 | 含义 |
+| --- | --- |
+| `ctx.url` | 当前图片的请求地址（不带附加选项） |
+| `ctx.index` | 本章规范化、去重后的图片列表索引，从 0 开始 |
+| `ctx.params` | `params` 中在正文第一页作用域求值后的 JSON 对象；可用嵌套对象、数组、表达式和模板传递章节密钥等，序列化后最多 16384 字符 |
+| `processPlainImages` | 默认 `false`，识别为正常图片时跳过脚本；确实需要处理正常图片文件时设为 `true` |
+
+`script` 与 `algorithm`、`key`、`iv`、`keyEncoding`、`ivPrefixBytes` 互斥。脚本参数统一放在 `params`；没有 `script` 时不能使用 `params` 或 `processPlainImages`。配置错误会显示具体字段，不自动接受别名。修改书源后请重新加载正文以生成新的图片参数。
+
+图片脚本拥有独立的 `image` 助手（同步返回 `Uint8Array`，底层通过异步系统加密接口完成）：
+
+```javascript
+image.decrypt('AES/CBC/PKCS7Padding', bytes, keyHex, ivHex)
+image.encrypt('AES/CBC/PKCS7Padding', bytes, keyHex, ivHex)
+image.hash('SHA256', bytes)
+image.hmac('SHA256', bytes, keyHex)
+```
+
+`keyHex`、`ivHex` 必须由完整十六进制字节组成。加解密支持 AES/3DES/DESEDE、ECB/CBC/CTR/OFB/CFB 模式及 NoPadding/PKCS5Padding/PKCS7Padding，最终可用组合由设备系统加密框架决定；ECB 不传 IV，其他模式的 IV 必须匹配块长度。摘要支持 MD5、SHA1、SHA224、SHA256、SHA384、SHA512、SM3；HMAC 组合以设备支持为准。不要在函数库顶层执行图片处理，或声明与图片助手 `image` 冲突的顶层变量；在处理函数内调用它。
+
+每张图使用新建的后台 QuickJS 会话，执行后销毁，不共享全局状态。图片脚本不提供正文阶段的 `native`/网络/Cookie/文件/登录接口。下载每批最多 4 张，脚本全局串行，最多保留 4 个运行或排队任务；排队最长 30 秒。输入和输出各不超过 20 MiB，QuickJS 内存上限 96 MiB，脚本 CPU 预算 2 秒、总耗时预算 10 秒；每张图最多 16 次助手调用，助手输入和输出累计不超过 80 MiB。取消章节加载会取消等待、下载和运行中的任务，失败或取消不会缓存处理结果。
+
+缓存标识包含书源、图片 URL、请求头、脚本代码、函数名、配置、参数、索引和普通图片处理开关。脚本报错、超限、返回错误类型或无效图片，会显示 `content.imageDecode.script` 与函数名，供书源作者定位。应用「后台脚本线程验证」包含二进制边界、宿主隔离、系统加密和取消恢复的真机验证项。
 
 `links` 在正文末尾加按钮。按钮有两种：打开一个网页，或者发一个请求。
 
@@ -840,7 +919,7 @@ fn sign(path, ts) {
 | 验证页、登录拦截页 | 主请求自动提示「去验证」 | 同样支持 |
 | 图片、音频的请求头 | `content.mediaHeaders` | 地址后跟选项对象 |
 | 跨请求保存的值（令牌等） | `cache` 声明，带有效期；脚本阶段里的 `cache`、`vars`、`temp` | 脚本读写缓存和书源变量 |
-| 图片解密 | `content.imageDecode`，标准对称解密 | `imageDecode` 脚本 |
+| 图片解密 | `content.imageDecode`，标准对称解密或受限字节脚本 | `imageDecode` 脚本 |
 | 用账号密码调接口登录 | `login.form` 加 `login.submit` 或 `login.script`，只保存凭据 | 登录面板脚本 |
 | 设置页里的操作按钮 | `actions` 声明 | 登录面板里的按钮脚本 |
 | 正文里点按钮调接口 | `content.links` 的 `request` | 脚本生成卡片 |

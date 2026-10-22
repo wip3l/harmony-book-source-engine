@@ -98,3 +98,7 @@ DEVECO_HOME="/c/Program Files/Huawei/DevEco Studio" node scripts/web-book-fetch-
 本项目以 [GNU General Public License v3.0](LICENSE) 发布。使用、修改或分发本项目（包括把它链接进你的应用）时，需要遵守 GPL-3.0 的条款。
 
 第三方组件（ohos_quickjs、QuickJS、部分 Huawei N-API 封装代码）分别遵循 MIT 与 Apache-2.0 许可，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与 [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt)。
+
+## 当前宿主验收
+
+轻页 4.2.925 已接入原生 JS 函数库、后台脚本阶段与 NativeSourceInteraction。宿主应分别验收提示、发现缓存刷新、网页验证、脚本按钮忙碌状态和动态选项；Node 回归不能替代真机网页及 QuickJS 验证。书源格式仍以公共书源规则开发文档为准。

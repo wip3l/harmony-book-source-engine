@@ -11,15 +11,18 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstring>
 #include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace {
 
 using Clock = std::chrono::steady_clock;
+constexpr size_t MAX_BINARY_BYTES = 20 * 1024 * 1024;
 
 struct EvalJob {
     int64_t id = 0;
@@ -27,6 +30,8 @@ struct EvalJob {
     std::string code;
     std::string name;
     int cpuTimeoutMs = 1000;
+    bool binary = false;
+    std::vector<uint8_t> bytes;
 };
 
 struct EvalOutcome {
@@ -39,6 +44,8 @@ struct EvalOutcome {
     double wallMs = 0;
     double hostWaitMs = 0;
     int hostCalls = 0;
+    bool binary = false;
+    std::vector<uint8_t> bytes;
 };
 
 enum class MessageKind { HostCall, EvalDone };
@@ -50,12 +57,15 @@ struct Message {
     std::string name;
     std::string payload;
     EvalOutcome outcome;
+    bool binary = false;
+    std::vector<uint8_t> bytes;
 };
 
 struct PendingCall {
     bool done = false;
     bool ok = false;
     std::string payload;
+    std::vector<uint8_t> bytes;
 };
 
 /**
@@ -134,6 +144,46 @@ bool ValueToText(JSContext* ctx, JSValueConst value, std::string& out)
     return true;
 }
 
+// Copy only the visible byte view. No JSON expansion and no pointer outlives its QuickJS value.
+bool ValueToBytes(JSContext* ctx, JSValueConst value, std::vector<uint8_t>& out)
+{
+    size_t size = 0;
+    uint8_t* data = JS_GetArrayBuffer(ctx, &size, value);
+    JSValue buffer = JS_UNDEFINED;
+    if (!data) {
+        JSValue error = JS_GetException(ctx);
+        const bool emptyBuffer = size == 0 && (JS_IsNull(error) || JS_IsUndefined(error));
+        JS_FreeValue(ctx, error);
+        if (emptyBuffer) { out.clear(); return true; }
+        size_t offset = 0, elementSize = 0;
+        buffer = JS_GetTypedArrayBuffer(ctx, value, &offset, &size, &elementSize);
+        if (JS_IsException(buffer)) return false;
+        size_t bufferSize = 0;
+        data = JS_GetArrayBuffer(ctx, &bufferSize, buffer);
+        bool validBuffer = data != nullptr;
+        if (!data) {
+            JSValue error = JS_GetException(ctx);
+            validBuffer = bufferSize == 0 && (JS_IsNull(error) || JS_IsUndefined(error));
+            JS_FreeValue(ctx, error);
+        }
+        if (!validBuffer || elementSize != 1 || offset > bufferSize || size > bufferSize - offset) {
+            JS_FreeValue(ctx, buffer);
+            JS_ThrowTypeError(ctx, "image result must be an ArrayBuffer or an 8-bit typed array");
+            return false;
+        }
+        if (data) data += offset;
+    }
+    if (size > MAX_BINARY_BYTES) {
+        JS_FreeValue(ctx, buffer);
+        JS_ThrowRangeError(ctx, "image bytes exceed 20 MiB");
+        return false;
+    }
+    out.clear();
+    if (size) out.assign(data, data + size);
+    JS_FreeValue(ctx, buffer);
+    return true;
+}
+
 double Millis(Clock::duration duration)
 {
     return std::chrono::duration<double, std::milli>(duration).count();
@@ -182,7 +232,7 @@ public:
         cv_.notify_all();
     }
 
-    bool resolve(int64_t callId, bool ok, std::string payload)
+    bool resolve(int64_t callId, bool ok, std::string payload, std::vector<uint8_t> bytes = {})
     {
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -191,6 +241,7 @@ public:
             it->second.done = true;
             it->second.ok = ok;
             it->second.payload = std::move(payload);
+            it->second.bytes = std::move(bytes);
         }
         cv_.notify_all();
         return true;
@@ -218,9 +269,15 @@ public:
     }
 
     /** Called from the script thread through the `__host` global. */
-    JSValue callHost(JSContext* ctx, const std::string& name, const std::string& payload)
+    JSValue callHost(JSContext* ctx, const std::string& name, const std::string& payload,
+        const std::vector<uint8_t>* bytes = nullptr)
     {
         if (aborted()) return ThrowError(ctx, "script cancelled");
+        if (currentBinary_ && !bytes) return ThrowError(ctx, "image scripts cannot call the stage host");
+        if (bytes && (!currentBinary_ || ++binaryCalls_ > 16 ||
+            (binaryBytes_ += bytes->size()) > 80 * 1024 * 1024)) {
+            return ThrowError(ctx, "image crypto call budget exceeded");
+        }
         int64_t callId = 0;
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -233,6 +290,8 @@ public:
         message->id = callId;
         message->name = name;
         message->payload = payload;
+        message->binary = bytes != nullptr;
+        if (bytes) message->bytes = *bytes;
         if (napi_call_threadsafe_function(tsfn_, message, napi_tsfn_nonblocking) != napi_ok) {
             delete message;
             std::lock_guard<std::mutex> lock(mutex_);
@@ -247,7 +306,7 @@ public:
             cv_.wait_until(lock, waitStarted + std::chrono::milliseconds(hostTimeoutMs_), [&]() {
                 return calls_[callId].done || aborted();
             });
-            call = calls_[callId];
+            call = std::move(calls_[callId]);
             calls_.erase(callId);
         }
         const auto waited = Clock::now() - waitStarted;
@@ -261,6 +320,11 @@ public:
             return ThrowError(ctx, "host call timed out: " + name);
         }
         if (!call.ok) return ThrowError(ctx, call.payload.empty() ? "host call failed: " + name : call.payload);
+        if (bytes) {
+            if (aborted()) return ThrowError(ctx, "script cancelled");
+            if ((binaryBytes_ += call.bytes.size()) > 80 * 1024 * 1024) return ThrowError(ctx, "image crypto byte budget exceeded");
+            return JS_NewArrayBufferCopy(ctx, call.bytes.data(), call.bytes.size());
+        }
         return JS_NewStringLen(ctx, call.payload.data(), call.payload.size());
     }
 
@@ -300,6 +364,18 @@ private:
         return self->callHost(ctx, name, payload);
     }
 
+    static JSValue BinaryHostFunction(JSContext* ctx, JSValueConst thisValue, int argc, JSValueConst* argv)
+    {
+        auto* self = static_cast<ScriptSession*>(JS_GetContextOpaque(ctx));
+        if (!self || argc != 3) return ThrowError(ctx, "image crypto needs name, bytes and options");
+        std::vector<uint8_t> bytes;
+        if (!ValueToBytes(ctx, argv[1], bytes)) return JS_EXCEPTION;
+        const std::string name = ToStdString(ctx, argv[0]);
+        const std::string payload = ToStdString(ctx, argv[2]);
+        if (name.size() > 32 || payload.size() > 16384) return ThrowError(ctx, "image crypto options too large");
+        return self->callHost(ctx, name, payload, &bytes);
+    }
+
     bool aborted() const
     {
         return closing_.load() || cancelGeneration_.load() > currentGeneration_;
@@ -316,6 +392,7 @@ private:
             JS_SetInterruptHandler(runtime, &ScriptSession::Interrupt, this);
             JSValue global = JS_GetGlobalObject(ctx);
             JS_SetPropertyStr(ctx, global, "__host", JS_NewCFunction(ctx, &ScriptSession::HostFunction, "__host", 2));
+            JS_SetPropertyStr(ctx, global, "__imageHost", JS_NewCFunction(ctx, &ScriptSession::BinaryHostFunction, "__imageHost", 3));
             JS_FreeValue(ctx, global);
         }
 
@@ -334,7 +411,7 @@ private:
             } else {
                 outcome = evaluate(runtime, ctx, job);
             }
-            post(MessageKind::EvalDone, job.id, outcome);
+            post(MessageKind::EvalDone, job.id, std::move(outcome));
         }
 
         std::deque<EvalJob> left;
@@ -356,6 +433,10 @@ private:
     EvalOutcome evaluate(JSRuntime* runtime, JSContext* ctx, const EvalJob& job)
     {
         EvalOutcome outcome;
+        outcome.binary = job.binary;
+        currentBinary_ = job.binary;
+        binaryCalls_ = 0;
+        binaryBytes_ = 0;
         currentGeneration_ = job.generation;
         currentCancelled_ = false;
         currentTimedOut_ = false;
@@ -370,7 +451,15 @@ private:
             return outcome;
         }
 
-        JSValue value = JS_Eval(ctx, job.code.c_str(), job.code.size(), job.name.c_str(), JS_EVAL_TYPE_GLOBAL);
+        bool inputReady = true;
+        if (job.binary) {
+            JSValue global = JS_GetGlobalObject(ctx);
+            JSValue input = JS_NewArrayBufferCopy(ctx, job.bytes.data(), job.bytes.size());
+            inputReady = !JS_IsException(input);
+            if (inputReady) inputReady = JS_SetPropertyStr(ctx, global, "__imageInput", input) >= 0;
+            JS_FreeValue(ctx, global);
+        }
+        JSValue value = inputReady ? JS_Eval(ctx, job.code.c_str(), job.code.size(), job.name.c_str(), JS_EVAL_TYPE_GLOBAL) : JS_EXCEPTION;
         bool success = !JS_IsException(value);
         std::string error;
         if (!success) error = TakeException(ctx);
@@ -402,11 +491,16 @@ private:
             }
         }
 
-        if (success && !ValueToText(ctx, value, outcome.value)) {
+        if (success && !(job.binary ? ValueToBytes(ctx, value, outcome.bytes) : ValueToText(ctx, value, outcome.value))) {
             success = false;
             error = TakeException(ctx);
         }
         JS_FreeValue(ctx, value);
+        if (job.binary) {
+            JSValue global = JS_GetGlobalObject(ctx);
+            JS_SetPropertyStr(ctx, global, "__imageInput", JS_UNDEFINED);
+            JS_FreeValue(ctx, global);
+        }
         JS_RunGC(runtime);
 
         const auto wall = Clock::now() - startedAt;
@@ -414,8 +508,8 @@ private:
         outcome.hostWaitMs = Millis(hostWait_);
         outcome.cpuMs = std::max(0.0, outcome.wallMs - outcome.hostWaitMs);
         outcome.hostCalls = hostCalls_;
-        outcome.timedOut = currentTimedOut_;
-        outcome.cancelled = currentCancelled_ || (!success && aborted());
+        outcome.timedOut = currentTimedOut_ || Clock::now() >= deadline_;
+        outcome.cancelled = currentCancelled_ || aborted();
         outcome.success = success && !outcome.timedOut && !outcome.cancelled;
         if (outcome.timedOut) {
             outcome.error = "script CPU time limit exceeded";
@@ -427,13 +521,13 @@ private:
         return outcome;
     }
 
-    void post(MessageKind kind, int64_t id, const EvalOutcome& outcome)
+    void post(MessageKind kind, int64_t id, EvalOutcome outcome)
     {
         auto* message = new Message();
         message->kind = kind;
         message->sessionId = id_;
         message->id = id;
-        message->outcome = outcome;
+        message->outcome = std::move(outcome);
         if (napi_call_threadsafe_function(tsfn_, message, napi_tsfn_nonblocking) != napi_ok) delete message;
     }
 
@@ -459,6 +553,9 @@ private:
     Clock::time_point deadline_;
     Clock::duration hostWait_ = Clock::duration::zero();
     int hostCalls_ = 0;
+    bool currentBinary_ = false;
+    int binaryCalls_ = 0;
+    size_t binaryBytes_ = 0;
 };
 
 // ---------- ArkTS-thread side ----------
@@ -489,6 +586,37 @@ napi_value MakeBool(napi_env env, bool value)
     napi_value result = nullptr;
     napi_get_boolean(env, value, &result);
     return result;
+}
+
+napi_value MakeBytes(napi_env env, const std::vector<uint8_t>& bytes)
+{
+    napi_value result = nullptr;
+    void* data = nullptr;
+    if (napi_create_arraybuffer(env, bytes.size(), &data, &result) != napi_ok) return nullptr;
+    if (!bytes.empty()) std::memcpy(data, bytes.data(), bytes.size());
+    return result;
+}
+
+bool ReadBytes(napi_env env, napi_value value, std::vector<uint8_t>& bytes)
+{
+    void* data = nullptr;
+    size_t size = 0;
+    bool isBuffer = false;
+    napi_is_arraybuffer(env, value, &isBuffer);
+    if (isBuffer) {
+        if (napi_get_arraybuffer_info(env, value, &data, &size) != napi_ok) return false;
+    } else {
+        bool isTyped = false;
+        napi_is_typedarray(env, value, &isTyped);
+        if (!isTyped) return false;
+        napi_typedarray_type type;
+        napi_value buffer = nullptr;
+        size_t offset = 0;
+        if (napi_get_typedarray_info(env, value, &type, &size, &data, &buffer, &offset) != napi_ok || type != napi_uint8_array) return false;
+    }
+    if (size > MAX_BINARY_BYTES || (size && !data)) return false;
+    if (size) bytes.assign(static_cast<uint8_t*>(data), static_cast<uint8_t*>(data) + size);
+    return true;
 }
 
 std::string ReadString(napi_env env, napi_value value)
@@ -534,6 +662,14 @@ napi_value OutcomeObject(napi_env env, const EvalOutcome& outcome)
     napi_set_named_property(env, object, "wallMs", MakeNumber(env, outcome.wallMs));
     napi_set_named_property(env, object, "hostWaitMs", MakeNumber(env, outcome.hostWaitMs));
     napi_set_named_property(env, object, "hostCalls", MakeNumber(env, outcome.hostCalls));
+    if (outcome.binary && outcome.success) {
+        napi_value data = MakeBytes(env, outcome.bytes);
+        if (data) napi_set_named_property(env, object, "bytes", data);
+        else {
+            napi_set_named_property(env, object, "success", MakeBool(env, false));
+            napi_set_named_property(env, object, "error", MakeString(env, "could not allocate image output"));
+        }
+    }
     return object;
 }
 
@@ -547,13 +683,14 @@ void CallJs(napi_env env, napi_value callback, void* context, void* data)
         return;
     }
     if (message->kind == MessageKind::HostCall) {
-        napi_value args[3] = {
+        napi_value args[4] = {
             MakeNumber(env, static_cast<double>(message->id)),
             MakeString(env, message->name),
             MakeString(env, message->payload),
+            message->binary ? MakeBytes(env, message->bytes) : Undefined(env),
         };
         napi_value result = nullptr;
-        const napi_status status = napi_call_function(env, Undefined(env), callback, 3, args, &result);
+        const napi_status status = args[3] ? napi_call_function(env, Undefined(env), callback, 4, args, &result) : napi_generic_failure;
         if (status != napi_ok) {
             napi_value exception = nullptr;
             napi_get_and_clear_last_exception(env, &exception);
@@ -666,7 +803,56 @@ napi_value Eval(napi_env env, napi_callback_info info)
     return promise;
 }
 
-// scriptSessionResolve(sessionId, callId, ok, payload): boolean
+// scriptSessionEvalBinary(sessionId, script, input, sourceURL, cpuTimeoutMs): Promise<outcome>
+napi_value EvalBinary(napi_env env, napi_callback_info info)
+{
+    size_t argc = 5;
+    napi_value args[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    napi_deferred deferred = nullptr;
+    napi_value promise = nullptr;
+    napi_create_promise(env, &deferred, &promise);
+    EvalOutcome failure;
+    failure.binary = true;
+    auto session = argc == 5 ? FindSession(static_cast<int64_t>(ReadNumber(env, args[0], 0))) : nullptr;
+    EvalJob job;
+    job.binary = true;
+    if (!session || !session->mainSide()->deferreds.empty()) {
+        failure.error = "binary session unavailable or busy";
+    } else if (!ReadBytes(env, args[2], job.bytes) || job.bytes.empty()) {
+        failure.error = "image input must contain 1 to 20 MiB of bytes";
+    } else {
+        job.code = ReadString(env, args[1]);
+        job.name = ReadString(env, args[3]);
+        if (job.code.size() > 1024 * 1024) failure.error = "image script exceeds 1 MiB";
+    }
+    if (!failure.error.empty()) {
+        napi_resolve_deferred(env, deferred, OutcomeObject(env, failure));
+        return promise;
+    }
+    static std::atomic<int64_t> nextBinaryId{-1};
+    job.id = nextBinaryId.fetch_sub(1);
+    job.cpuTimeoutMs = static_cast<int>(std::max(1.0, std::min(5000.0, ReadNumber(env, args[4], 2000))));
+    session->mainSide()->deferreds[job.id] = deferred;
+    session->enqueue(std::move(job));
+    return promise;
+}
+
+napi_value ResolveBinary(napi_env env, napi_callback_info info)
+{
+    size_t argc = 5;
+    napi_value args[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc != 5) return MakeBool(env, false);
+    auto session = FindSession(static_cast<int64_t>(ReadNumber(env, args[0], 0)));
+    if (!session) return MakeBool(env, false);
+    bool ok = ReadBool(env, args[2]);
+    std::vector<uint8_t> bytes;
+    std::string error = ReadString(env, args[4]);
+    if (ok && !ReadBytes(env, args[3], bytes)) { ok = false; error = "invalid image crypto output"; }
+    return MakeBool(env, session->resolve(static_cast<int64_t>(ReadNumber(env, args[1], 0)), ok, error, std::move(bytes)));
+}
+
 napi_value Resolve(napi_env env, napi_callback_info info)
 {
     size_t argc = 4;
@@ -720,6 +906,8 @@ void DefineScriptSessionExports(napi_env env, napi_value exports)
     napi_property_descriptor desc[] = {
         { "scriptSessionCreate", nullptr, Create, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "scriptSessionEval", nullptr, Eval, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "scriptSessionEvalBinary", nullptr, EvalBinary, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "scriptSessionResolveBinary", nullptr, ResolveBinary, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "scriptSessionResolve", nullptr, Resolve, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "scriptSessionCancel", nullptr, Cancel, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "scriptSessionRelease", nullptr, Release, nullptr, nullptr, nullptr, napi_default, nullptr },

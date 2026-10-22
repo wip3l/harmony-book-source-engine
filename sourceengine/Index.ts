@@ -326,5 +326,6 @@ export {
 export { NativeSourceImport } from './src/main/ets/core/nativesource/NativeSourceImport';
 export { SourceCoverUrl } from './src/main/ets/core/nativesource/SourceCoverUrl';
 export { SourceImageDecoder } from './src/main/ets/core/nativesource/SourceImageDecoder';
+export { NativeImageScriptRunner } from './src/main/ets/core/nativesource/NativeImageScriptRunner';
 export { SourceCoverLoader } from './src/main/ets/core/nativesource/SourceCoverLoader';
 export type { NativeCoverDecodeSpec } from './src/main/ets/core/nativesource/NativeSourceSpec';

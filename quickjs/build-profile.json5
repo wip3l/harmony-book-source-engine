@@ -3,13 +3,11 @@
   "buildOption": {
     "externalNativeOptions": {
       "path": "./src/main/cpp/CMakeLists.txt",
-      "arguments": "",
-      "cppFlags": "",
       "abiFilters": [
         "arm64-v8a",
         "x86_64"
       ]
-    },
+    }
   },
   "buildOptionSet": [
     {
@@ -29,18 +27,29 @@
       },
       "nativeLib": {
         "debugSymbol": {
-          "strip": true,
-          "exclude": []
+          "strip": true
         }
       }
-    },
+    }
   ],
   "targets": [
     {
-      "name": "default"
+      "name": "default",
+      "runtimeOS": "HarmonyOS"
     },
     {
       "name": "ohosTest"
+    }
+  ],
+  "buildModeBinder": [
+    {
+      "buildModeName": "release",
+      "mappings": [
+        {
+          "targetName": "default",
+          "buildOptionName": "release"
+        }
+      ]
     }
   ]
 }

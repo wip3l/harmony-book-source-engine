@@ -259,7 +259,8 @@ try {
   equal(runHost.requests[0].method, 'GET', '默认 GET');
   equal(found.length, 2, '缺名称的条目被丢弃');
   equal(found[0].author, '土豆', '|| 备选路径');
-  equal(found[0].coverUrl, 'https://api.example.com/c/11.jpg', '封面相对地址补全');
+  equal(mods.SourceCoverUrl.address(found[0].coverUrl), 'https://api.example.com/c/11.jpg', '封面相对地址补全');
+  equal(mods.SourceCoverUrl.headers(found[0].coverUrl), { 'User-Agent': 'check' }, '封面继承书源请求头');
   equal(found[0].kind, '玄幻,9.1分', '列表字段用逗号连接');
   equal(found[0].wordCount, '2.5万字', '字数换算');
   equal(found[0].bookUrl, 'https://api.example.com/detail?book_id=11', '模板字段');

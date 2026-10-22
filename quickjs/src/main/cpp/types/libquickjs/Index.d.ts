@@ -90,15 +90,19 @@ export interface QuickJsNativeApi {
 
   // Script sessions: QuickJS on a background thread with synchronous host calls
   scriptSessionCreate(memoryLimitBytes: number, stackLimitBytes: number, hostTimeoutMs: number,
-    onHostCall: (callId: number, name: string, payload: string) => void): number;
+    onHostCall: (callId: number, name: string, payload: string, bytes?: ArrayBuffer) => void): number;
   scriptSessionEval(sessionId: number, script: string, sourceURL: string,
     cpuTimeoutMs: number): Promise<ScriptSessionOutcome>;
   scriptSessionResolve(sessionId: number, callId: number, ok: boolean, payload: string): boolean;
+  scriptSessionEvalBinary(sessionId: number, script: string, input: Uint8Array, sourceURL: string,
+    cpuTimeoutMs: number): Promise<ScriptSessionOutcome>;
+  scriptSessionResolveBinary(sessionId: number, callId: number, ok: boolean, bytes: Uint8Array, error: string): boolean;
   scriptSessionCancel(sessionId: number): void;
   scriptSessionRelease(sessionId: number): void;
 }
 
 export interface ScriptSessionOutcome {
+  bytes?: ArrayBuffer;
   success: boolean;
   value: string;
   error: string;

@@ -14,6 +14,7 @@ export class JSScriptSessionOptions {
 }
 
 export class JSScriptEvalResult {
+  bytes: Uint8Array = new Uint8Array();
   success: boolean = false;
   value: string = '';
   error: string = '';
@@ -27,6 +28,7 @@ export class JSScriptEvalResult {
 
 /** Answers `__host(name, payload)` from the script thread. May finish asynchronously. */
 export type JSScriptHostHandler = (name: string, payload: string) => Promise<string> | string;
+export type JSScriptBinaryHostHandler = (name: string, bytes: Uint8Array, options: string) => Promise<Uint8Array>;
 
 /**
  * A QuickJS runtime on its own background thread. Globals persist across evaluate() calls until
@@ -36,12 +38,17 @@ export type JSScriptHostHandler = (name: string, payload: string) => Promise<str
 export class JSScriptSession {
   private id: number = 0;
   private handler: JSScriptHostHandler;
+  private binaryHandler?: JSScriptBinaryHostHandler;
 
-  constructor(handler: JSScriptHostHandler, options?: JSScriptSessionOptions) {
+  constructor(handler: JSScriptHostHandler, options?: JSScriptSessionOptions, binaryHandler?: JSScriptBinaryHostHandler) {
     const config = options || new JSScriptSessionOptions();
     this.handler = handler;
+    this.binaryHandler = binaryHandler;
     this.id = qjs.scriptSessionCreate(config.memoryLimitBytes, config.stackLimitBytes, config.hostTimeoutMs,
-      (callId: number, name: string, payload: string): void => this.dispatch(callId, name, payload));
+      (callId: number, name: string, payload: string, bytes?: ArrayBuffer): void => {
+        if (bytes !== undefined) this.dispatchBinary(callId, name, new Uint8Array(bytes), payload);
+        else this.dispatch(callId, name, payload);
+      });
   }
 
   get released(): boolean {
@@ -67,6 +74,38 @@ export class JSScriptSession {
     result.hostWaitMs = outcome.hostWaitMs;
     result.hostCalls = outcome.hostCalls;
     return result;
+  }
+
+  /** Evaluates with binary input/output; ordinary host calls are disabled for this job. */
+  async evaluateBinary(code: string, input: Uint8Array, sourceName: string = 'image.js',
+    cpuTimeoutMs: number = 2000): Promise<JSScriptEvalResult> {
+    const result = new JSScriptEvalResult();
+    if (!this.id) { result.cancelled = true; result.error = 'script session released'; return result; }
+    const outcome = await qjs.scriptSessionEvalBinary(this.id, code, input, sourceName, cpuTimeoutMs);
+    result.success = outcome.success;
+    result.error = outcome.error;
+    result.timedOut = outcome.timedOut;
+    result.cancelled = outcome.cancelled;
+    result.cpuMs = outcome.cpuMs;
+    result.wallMs = outcome.wallMs;
+    result.hostWaitMs = outcome.hostWaitMs;
+    result.hostCalls = outcome.hostCalls;
+    if (outcome.bytes) result.bytes = new Uint8Array(outcome.bytes);
+    return result;
+  }
+
+  private dispatchBinary(callId: number, name: string, bytes: Uint8Array, options: string): void {
+    const sessionId = this.id;
+    const handler = this.binaryHandler;
+    if (!handler) {
+      qjs.scriptSessionResolveBinary(sessionId, callId, false, new Uint8Array(), 'binary host is unavailable');
+      return;
+    }
+    Promise.resolve().then((): Promise<Uint8Array> => handler(name, bytes, options)).then((result: Uint8Array): void => {
+      if (this.id === sessionId) qjs.scriptSessionResolveBinary(sessionId, callId, true, result, '');
+    }).catch((error: Object): void => {
+      if (this.id === sessionId) qjs.scriptSessionResolveBinary(sessionId, callId, false, new Uint8Array(), JSScriptSession.message(error));
+    });
   }
 
   /** Aborts the running script and everything queued so far; later evaluate() calls run normally. */

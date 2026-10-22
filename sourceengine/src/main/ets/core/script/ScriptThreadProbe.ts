@@ -7,6 +7,7 @@ import { NativeExpr, NativeScope } from '../nativesource/NativeExpr';
 import type { NativeExprHost, NativeValue } from '../nativesource/NativeExpr';
 import { NativeJsLibrary } from '../nativesource/NativeJsLibrary';
 import { NativeSourceCrypto } from '../nativesource/NativeSourceCrypto';
+import { NativeImageScriptRunner } from '../nativesource/NativeImageScriptRunner';
 import { NativeSourceRunner } from '../nativesource/NativeSourceRunner';
 import type { NativeBookRecord, NativeRequest, NativeResponse, NativeRunnerHost } from '../nativesource/NativeSourceRunner';
 import { NativeSourceSpec } from '../nativesource/NativeSourceSpec';
@@ -137,6 +138,9 @@ export class ScriptThreadProbe {
       ['脚本阶段：循环与并发的真实请求', () => ScriptThreadProbe.scriptStage(httpUrl)],
       ['脚本阶段：会话复用与状态接口', () => ScriptThreadProbe.scriptStageState()],
       ['脚本阶段：请求预算与取消', () => ScriptThreadProbe.scriptStageLimits()],
+      ['图片脚本：二进制边界与宿主隔离', () => ScriptThreadProbe.imageBinary()],
+      ['图片脚本：异步系统加密与逐图隔离', () => ScriptThreadProbe.imageCrypto()],
+      ['图片脚本：CPU 超时与等待中取消', () => ScriptThreadProbe.imageCancel()],
     ];
     for (const entry of cases) {
       let result: ScriptProbeResult;
@@ -158,6 +162,80 @@ export class ScriptThreadProbe {
     const lines: string[] = [`后台脚本线程验证：${passed}/${results.length} 通过`];
     for (const item of results) lines.push(`${item.passed ? '✓' : '✗'} ${item.name}：${item.detail}`);
     return lines.join('\n');
+  }
+
+  private static async imageBinary(): Promise<ScriptProbeResult> {
+    let stageCalls = 0;
+    let binaryCalls = 0;
+    const options = new JSScriptSessionOptions();
+    options.memoryLimitBytes = 96 * 1024 * 1024;
+    const session = new JSScriptSession((): string => { stageCalls++; return 'unsafe'; }, options,
+      async (_name: string, bytes: Uint8Array): Promise<Uint8Array> => { binaryCalls++; return bytes.subarray(1, 3); });
+    const input = new Uint8Array([99, 10, 20, 30, 88]).subarray(1, 4);
+    try {
+      for (const code of ['new Uint8Array(__imageInput).subarray(1)',
+        'Promise.resolve(new Uint8Array(__imageInput).subarray(1))',
+        'new Uint8Array(__imageHost("echo", new Uint8Array(__imageInput), "{}"))']) {
+        const result = await session.evaluateBinary(code, input);
+        if (!result.success || Array.from(result.bytes).join(',') !== '20,30') {
+          return ScriptThreadProbe.result(false, result.error || '字节切片偏移或长度错误');
+        }
+      }
+      for (const code of ['"text"', '[1,2]', 'new Uint16Array([1])', 'new Uint8Array(20*1024*1024+1)',
+        '__host("http","{}")']) {
+        const result = await session.evaluateBinary(code, input);
+        if (result.success) return ScriptThreadProbe.result(false, `未拒绝 ${code}`);
+      }
+      const max = await session.evaluateBinary('new Uint8Array(20*1024*1024)', input);
+      const empty = await session.evaluateBinary('new ArrayBuffer(0)', input);
+      const limit = await session.evaluateBinary('for(let i=0;i<17;i++)__imageHost("echo",new Uint8Array(__imageInput),"{}"); __imageInput', input);
+      return ScriptThreadProbe.result(max.success && max.bytes.length === 20 * 1024 * 1024 &&
+        empty.success && empty.bytes.length === 0 && !limit.success && stageCalls === 0 && binaryCalls === 17,
+        `切片/Promise/20 MiB/空缓冲区/非法返回值/宿主隔离；${limit.error}`);
+    } finally { session.release(); }
+  }
+
+  private static async imageCrypto(): Promise<ScriptProbeResult> {
+    const input = new Uint8Array([97, 98, 99]);
+    const context = { url: 'https://example.com/a', index: 2, params: {} };
+    const code = `function decode(bytes,ctx) {
+      if (ctx.index !== 2 || globalThis.seen) throw new Error('context leaked');
+      globalThis.seen = true;
+      const key='000102030405060708090a0b0c0d0e0f';
+      const iv='0f0e0d0c0b0a09080706050403020100';
+      const encrypted=image.encrypt('AES/CBC/PKCS7Padding',bytes,key,iv);
+      const plain=image.decrypt('AES/CBC/PKCS7Padding',encrypted,key,iv);
+      const mac=image.hmac('SHA256',plain,key);
+      if(mac.length!==32) throw new Error('hmac failed');
+      return image.hash('SHA256',plain);
+    }`;
+    for (let i = 0; i < 2; i++) {
+      const bytes = await NativeImageScriptRunner.run(code, 'decode', input, context);
+      const hex = Array.from(bytes).map((value: number): string => value.toString(16).padStart(2, '0')).join('');
+      if (hex !== 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad') {
+        return ScriptThreadProbe.result(false, `摘要不符：${hex}`);
+      }
+    }
+    return ScriptThreadProbe.result(true, '真实异步 AES 加密/解密、HMAC、SHA256，独立会话重复执行一致');
+  }
+
+  private static async imageCancel(): Promise<ScriptProbeResult> {
+    const session = new JSScriptSession((): string => '', undefined,
+      async (_name: string, bytes: Uint8Array): Promise<Uint8Array> => {
+        await new Promise<void>((resolve): void => { setTimeout(resolve, 300); });
+        return bytes;
+      });
+    try {
+      const input = new Uint8Array([1, 2, 3]);
+      const timeout = await session.evaluateBinary('while(true){}', input, 'image-timeout.js', 100);
+      const pending = session.evaluateBinary('__imageHost("slow",new Uint8Array(__imageInput),"{}")', input);
+      const timer = setTimeout((): void => session.cancel(), 50);
+      const cancelled = await pending;
+      clearTimeout(timer);
+      const recovered = await session.evaluateBinary('__imageInput', input);
+      return ScriptThreadProbe.result(timeout.timedOut && cancelled.cancelled && recovered.success,
+        `超时=${timeout.timedOut}，取消=${cancelled.cancelled}，恢复=${recovered.success}`);
+    } finally { session.release(); }
   }
 
   private static async basics(): Promise<ScriptProbeResult> {

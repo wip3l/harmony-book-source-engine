@@ -18,7 +18,7 @@ try {
       const k = Buffer.from(key, 'hex');
       const cipher = crypto.createDecipheriv('aes-' + k.length * 8 + '-cbc', k, Buffer.from(iv, 'hex'));
       return new Uint8Array(Buffer.concat([cipher.update(data), cipher.final()]));
-    } };
+    }, async decryptBytesAsync(...args) { return this.decryptBytes(...args); } };
     const NativeSourceSpec = globalThis.__coverCheckSpec;\n` + code;
   globalThis.__coverCheckSpec = mods.NativeSourceSpec;
   const filename = path.join(dir, 'decoder.ts');
@@ -31,6 +31,7 @@ try {
   const encrypted = Buffer.concat([iv, cipher.update(png), cipher.final()]);
   const spec = { algorithm: 'AES/CBC/PKCS7Padding', key, keyEncoding: 'utf8', ivPrefixBytes: 16 };
   assert.deepEqual(Buffer.from(decoder.decode(encrypted, spec)), png);
+  assert.deepEqual(Buffer.from(await decoder.decodeAsync(encrypted, spec)), png);
   assert.deepEqual(Buffer.from(decoder.decode(encrypted.subarray(16), { ...spec, ivPrefixBytes: 0, iv: iv.toString('hex') })), png);
   assert.equal(decoder.decode(png, spec), png);
   assert.throws(() => decoder.decode(encrypted.subarray(1), spec));
@@ -77,5 +78,36 @@ try {
   assert.equal(urls.wrap('', definition.url), '');
   assert.equal(urls.source(urls.wrap('https://cdn.example.com/a#old', definition.url)), definition.url);
   assert.throws(() => urls.source('https://cdn.example.com/a#source-cover-v1=%'));
+  // Exercise the actual loader with only HTTP/crypto platform boundaries replaced.
+  globalThis.__coverLoaderCheck = { NativeSourceSpec: Spec, SourceCoverUrl: urls, SourceImageDecoder: decoder };
+  const loaderFile = path.join(dir, 'loader.ts');
+  const loaderSource = fs.readFileSync(new URL('../sourceengine/src/main/ets/core/nativesource/SourceCoverLoader.ts', import.meta.url), 'utf8')
+    .replace(/^import .*;\r?\n/gm, '');
+  fs.writeFileSync(loaderFile, 'const { NativeSourceSpec, SourceCoverUrl, SourceImageDecoder } = globalThis.__coverLoaderCheck;\n' + loaderSource);
+  const { SourceCoverLoader: loader } = await import(pathToFileURL(loaderFile));
+  const raw = urls.wrap('https://cdn.example.com/a.png', definition.url, {'Accept-Language':'en-US',Referer:'https://example.com/'});
+  const requests = [];
+  let binary = encrypted;
+  const http = { async executeBinary(request, limit) { requests.push({request,limit}); return {success:true,data:binary}; } };
+  const source = { bookSourceUrl: definition.url, jsLib: Spec.pack(definition) };
+  assert.deepEqual(Buffer.from(await loader.load(http,source,raw)),png);
+  assert.equal(requests[0].request.url,'https://cdn.example.com/a.png','local metadata never reaches the HTTP URL');
+  assert.equal(requests[0].request.headers['Accept-Language'],'en-US');
+  assert.equal(requests[0].request.headers.Referer,'https://example.com/');
+  assert.equal(requests[0].request.cookieSource,definition.url);
+  assert.equal(requests[0].limit,decoder.MAX_BYTES);
+  binary=png;
+  const plainDefinition={...definition}; delete plainDefinition.coverDecode;
+  source.jsLib=Spec.pack(plainDefinition);
+  assert.deepEqual(Buffer.from(await loader.load(http,source,raw)),png,'ordinary covers can carry custom headers');
+  await loader.load(http,source,urls.wrap('https://cdn.example.com/a.png',definition.url));
+  assert.equal(requests.at(-1).request.headers['Accept-Language'],'zh-CN,zh;q=0.9,en;q=0.8');
+  await assert.rejects(loader.load(http,{...source,bookSourceUrl:'https://wrong.example'},raw),/source mismatch/);
+  binary=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>');
+  assert.deepEqual(Buffer.from(await loader.load(http,source,raw)),binary,'ordinary SVG covers retain renderer support');
+  binary=new Uint8Array();
+  await assert.rejects(loader.load(http,source,raw),/byte length/);
+  await assert.rejects(loader.load({executeBinary:async()=>({success:false})},source,raw),/download failed/);
+  delete globalThis.__coverLoaderCheck;
   console.log('source-cover-check: AES prefix/fixed IV, bounds, malformed parameters and search/explore/detail passed');
 } finally { mods.cleanup(); fs.rmSync(dir, { recursive: true, force: true }); }

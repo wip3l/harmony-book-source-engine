@@ -1,7 +1,5 @@
 {
   "apiType": "stageMode",
-  "buildOption": {
-  },
   "buildOptionSet": [
     {
       "name": "release",
@@ -22,7 +20,19 @@
   ],
   "targets": [
     {
-      "name": "default"
+      "name": "default",
+      "runtimeOS": "HarmonyOS"
+    }
+  ],
+  "buildModeBinder": [
+    {
+      "buildModeName": "release",
+      "mappings": [
+        {
+          "targetName": "default",
+          "buildOptionName": "release"
+        }
+      ]
     }
   ]
 }
