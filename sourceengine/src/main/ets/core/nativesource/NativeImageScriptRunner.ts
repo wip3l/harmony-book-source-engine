@@ -1,6 +1,7 @@
 import { JSScriptSession, JSScriptSessionOptions } from '@devzeng/quickjs';
 import { NativeSourceCrypto } from './NativeSourceCrypto';
 import { SourceEngineHost } from '../host/SourceEngineHost';
+import { NativeImageTransform } from './NativeImageTransform';
 
 export interface NativeImageScriptContext {
   url: string;
@@ -30,7 +31,8 @@ export class NativeImageScriptRunner {
         decrypt:(algorithm,data,keyHex,ivHex)=>invoke("decrypt",data,algorithm,keyHex,ivHex),
         encrypt:(algorithm,data,keyHex,ivHex)=>invoke("encrypt",data,algorithm,keyHex,ivHex),
         hash:(algorithm,data)=>invoke("hash",data,algorithm),
-        hmac:(algorithm,data,keyHex)=>invoke("hmac",data,algorithm,keyHex)
+        hmac:(algorithm,data,keyHex)=>invoke("hmac",data,algorithm,keyHex),
+        reorderStrips:(data,options)=>new Uint8Array(host("reorderStrips",data,JSON.stringify(options)))
       });
       ${js}
       if(typeof ${fn}!=="function") throw new Error("content.imageDecode.script: function missing");
@@ -80,7 +82,8 @@ export class NativeImageScriptRunner {
       session = new JSScriptSession((): string => { throw new Error('图片脚本不开放此宿主接口'); }, options,
         async (name: string, bytes: Uint8Array, params: string): Promise<Uint8Array> => {
           if (cancelled() || Date.now() - started >= 10000) throw new Error('图片脚本已停止');
-          return await NativeSourceCrypto.imageOperation(name, bytes, params);
+          return name === 'reorderStrips' ? await NativeImageTransform.reorderStrips(bytes, params) :
+            await NativeSourceCrypto.imageOperation(name, bytes, params);
         });
       const current = session;
       timer = setInterval((): void => {

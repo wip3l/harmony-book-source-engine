@@ -327,5 +327,6 @@ export { NativeSourceImport } from './src/main/ets/core/nativesource/NativeSourc
 export { SourceCoverUrl } from './src/main/ets/core/nativesource/SourceCoverUrl';
 export { SourceImageDecoder } from './src/main/ets/core/nativesource/SourceImageDecoder';
 export { NativeImageScriptRunner } from './src/main/ets/core/nativesource/NativeImageScriptRunner';
+export { ImageStripOptions, ImageStripRange, NativeImageTransform } from './src/main/ets/core/nativesource/NativeImageTransform';
 export { SourceCoverLoader } from './src/main/ets/core/nativesource/SourceCoverLoader';
 export type { NativeCoverDecodeSpec } from './src/main/ets/core/nativesource/NativeSourceSpec';

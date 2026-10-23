@@ -821,6 +821,28 @@ image.hash('SHA256', bytes)
 image.hmac('SHA256', bytes, keyHex)
 ```
 
+分片打乱但文件本身仍是正常图片时，可使用 `image.reorderStrips(bytes, options)`，并设置
+`processPlainImages: true`。该方法只操作当前图片，不请求任何网站：
+
+```js
+function restoreImage(bytes, ctx) {
+  return image.reorderStrips(bytes, {
+    count: ctx.params.count,
+    remainder: 'last',
+    format: 'image/png'
+  });
+}
+```
+
+`count` 是 1～256 的整数；输入横条从上到下编号 0～count-1，`order` 指定输出顺序，
+省略时倒序。`order` 必须包含每个序号且不能重复。高度除不尽时，`remainder` 指定输入
+图中额外像素所在的条，支持 `first` / `last`（默认 `last`）。例如高度 11、count=3，
+默认输入条高为 3/3/5，倒序后为 5/3/3，条内行方向保持不变。输出默认 PNG，保持原始
+尺寸；也可指定 `image/jpeg` / `image/webp` 和 0～100 的 `quality`（默认 95）。
+单图最多 4 Mi 像素，宽高最多 16384，分片数不能大于高度，编码输入/输出各最多
+20 MiB；count=1 原样返回，动图不重排。章节 ID、摘要及段数等站点算法由导入的源计算。
+宿主须提供该操作；仅更新规则而未更新宿主不能获得本地重排能力。
+
 `keyHex`、`ivHex` 必须由完整十六进制字节组成。加解密支持 AES/3DES/DESEDE、ECB/CBC/CTR/OFB/CFB 模式及 NoPadding/PKCS5Padding/PKCS7Padding，最终可用组合由设备系统加密框架决定；ECB 不传 IV，其他模式的 IV 必须匹配块长度。摘要支持 MD5、SHA1、SHA224、SHA256、SHA384、SHA512、SM3；HMAC 组合以设备支持为准。不要在函数库顶层执行图片处理，或声明与图片助手 `image` 冲突的顶层变量；在处理函数内调用它。
 
 每张图使用新建的后台 QuickJS 会话，执行后销毁，不共享全局状态。图片脚本不提供正文阶段的 `native`/网络/Cookie/文件/登录接口。下载每批最多 4 张，脚本全局串行，最多保留 4 个运行或排队任务，再多的图片等待空位（例如当前章与预加载的相邻章同时解密）；从开始等待算起最长 60 秒。输入和输出各不超过 20 MiB，QuickJS 内存上限 96 MiB，脚本 CPU 预算 2 秒、总耗时预算 10 秒；每张图最多 16 次助手调用，助手输入和输出累计不超过 80 MiB。取消章节加载会取消等待、下载和运行中的任务，失败或取消不会缓存处理结果。
