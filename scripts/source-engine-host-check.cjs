@@ -38,6 +38,14 @@ async function run() {
   const {SourceEngineHost:host} = load('core/host/SourceEngineHost');
   const {BookSource} = load('model/data/Book');
   const source = new BookSource(); source.bookSourceUrl = 'https://host.test';
+  const copy = new BookSource();
+  assert.equal(host.readerImagesDeferred(source), false, 'default content/download callers materialize images');
+  host.setReaderImagesDeferred(source, true);
+  host.bindSource(source, copy);
+  assert.equal(host.readerImagesDeferred(copy), true, 'per-request image policy follows copied sources');
+  host.setReaderImagesDeferred(source, false);
+  host.bindSource(source, copy);
+  assert.equal(host.readerImagesDeferred(copy), false, 'rebinding cannot retain an old deferred policy');
   const {CookieStore} = load('core/http/CookieStore');
   const {BookSourceRuntimeStore:store} = load('core/book/BookSourceRuntimeStore');
   assert.equal(CookieStore.forSource(source.bookSourceUrl),CookieStore);
