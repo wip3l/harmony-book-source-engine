@@ -14,7 +14,7 @@
 | 简听的导入限制、安全预算、UI 和缓存 | [简听宿主说明](https://github.com/end-web/HarmonyOS-book/blob/main/docs/BOOK_SOURCE_RULES.md) |
 | 封面解密 | 本文 `coverDecode` 字段；宿主还需接入 [SourceCoverLoader](cover-decoding.md)，不能仅靠更新文档或 JSON 获得显示能力 |
 
-迁移时轻页参考版本为 4.0.919，本文最近一次按代码核对时轻页为 4.2.925（2026-10-20）。下文保留的轻页 UI、视频和调试能力不代表所有宿主均已实现。简听与轻页（4.0.921 起）都已接入封面解密。
+迁移时轻页参考版本为 4.0.919，本文最近一次按代码核对时轻页为 4.3.927（2026-10-22）。下文保留的轻页 UI、视频和调试能力不代表所有宿主均已实现。简听与轻页（4.0.921 起）都已接入封面解密。
 
 > 示例只使用 `example.com`、本地测试服务和虚构数据，不发布实际站点书源或登录凭据。
 
@@ -296,7 +296,7 @@ fn sign(path, ts) {
 为了少写样板：脚本阶段不写 `list` 时，返回数组的每一项就是一条结果；不写 `fields` 时按同名键取值（书籍取 `name`、`author`、`kind`、`intro`、`coverUrl`、`wordCount`、`lastChapter`、`updateTime`、`status`、`bookUrl`、`tocUrl`、`type`，章节取 `title`、`url`、`isVip`、`isPay`、`isVolume`、`tag`）。正文不写 `text`、`images`、`audio`、`video` 时，返回字符串就是正文，返回对象时按书籍类型取同名键。
 
 - 可以写 `script` 的阶段：`search`、`explore`、`detail`、`toc`、`content`。写了 `script` 的阶段不用写 `url`；`toc` 和 `content` 的翻页由脚本自己处理，**不再跟随 `nextUrl`**。
-- 发现页的分类仍然用 `menus` 声明（没有 `url` 的仍是分组标题）；脚本模式下 `url` 可以写任意标识，函数从 `ctx.url` 读到，`ctx.title` 是分类名，动态分类的条目在 `ctx.menu`。
+- 发现页的分类用 `menus` 声明（没有 `url` 的仍是分组标题），要在脚本里算出分类就用 `dynamicMenus.script`（见[发现](#发现-explore)）；脚本模式下 `url` 可以写任意标识，函数从 `ctx.url` 读到，`ctx.title` 是分类名，动态分类的条目在 `ctx.menu`。
 - 函数的参数 `ctx` 里有 `stage`、`key`、`page`、`book`、`chapter`、`vars`、`source`、`login`、`baseUrl`、`url`、`title`、`menu`，以及顶层 `cache`、`let` 算出的值。`book.vars` 是书籍变量（只读）。
 - 函数可以是 `async` 的；里面的宿主调用都是同步的，不需要 `await`。
 
@@ -403,6 +403,7 @@ fn sign(path, ts) {
 | `login.sendCode.script` | 从 `ctx.form` 取账号等，返回提示字符串或带 `message` 的对象 |
 | `actions[].script` | `ctx.action` 是按钮文字，返回字符串或 `{ message }`；可写变量后调用 `ui.refreshExplore()` |
 | `vars[].optionsScript` | `ctx.key` 是变量名，返回非空字符串数组；失败或空结果时由设置页回退到静态 `options` |
+| `explore.dynamicMenus.script` | `ctx.stage` 是 `menus`，返回分类数组 `[{ title, url }]` 或 `名称::地址` 文本；不发 `url` 请求，不能打开网页 |
 
 这些函数同样写在顶层 `js` 中，通过字段引用函数名，不能在 `script` 字段直接塞一段 JS。设置布局仍由应用绘制，脚本不能新增任意控件。`browser.verify`、`ui.toast`、`ui.refreshExplore` 依赖宿主的 `NativeSourceInteraction` 接入；`browser.render` 依赖网页抓取宿主。轻页已接入，其他宿主需单独确认。
 
@@ -472,7 +473,7 @@ fn sign(path, ts) {
 
 固定 IV 示例：`"iv": "000102030405060708090a0b0c0d0e0f"`，此时删除 `ivPrefixBytes`。
 图片地址仍由 `fields.coverUrl` 提取；HTML 延迟加载图片可使用 `img@data-src`，JSON 则使用对应字段规则。
-正文漫画的 `content.imageDecode` 也支持 `ivPrefixBytes:16` 和显式 `keyEncoding`，但它的 key/iv 可按章求值；固定 IV 仍须通过 `= hexBytes('…')` 转为字节，不能直接套用封面固定 IV 的写法。详见正文小节。
+正文漫画的 `content.imageDecode` 也支持 `ivPrefixBytes:16` 和显式 `keyEncoding`，但它的 key/iv 按表达式求值，不能直接套用封面裸写十六进制的写法：IV 是 16 个字符的文本时写 `"iv": "= '97b60394abc2fbe1'"`（按 UTF-8 取字节），是十六进制时写 `"iv": "= hexBytes('3937…')"`。详见正文小节。
 
 封面请求会继承顶层 `headers` 中的 `Accept`、`Accept-Language`、`User-Agent`、`Referer`、`Origin`、`Cookie`、`Authorization`。可用顶层 `coverHeaders` 单独覆盖（头名称不区分大小写），普通封面和加密封面均适用：
 
@@ -686,6 +687,16 @@ fn sign(path, ts) {
 - `menus` 是固定分类。没有 `url` 的条目是分组标题，`when` 为假时该条目隐藏。条目可以带 `headers`，只在打开这个分类时附加，适合个人书架这类需要登录凭据的分类。条目也可以带自己的 `method`、`body`，不写时沿用 `explore` 上的；`body` 写空串表示这个分类不带请求体。这样一个书源可以同时对接 GET 和 POST 两种接口，例如 `{ "title": "筛选", "url": "{{server}}/filter", "method": "POST", "body": "= tojson({page: page, sort: 'hot'})" }`。
 - 每个菜单还可设置自己的 `list`、`fields`；两者分别回退到 `explore` 的同名配置。设置 `fields` 时整组替换，不逐字段合并，仍须包含 `name`、`bookUrl`。例如 `{ "title": "VIP", "url": "/api/home", "list": "$.data.vipList[*]", "fields": { "name": "$.title", "bookUrl": "$.url" } }`。所有可点击菜单都提供完整规则时，可以省略全局 `list/fields`；动态分类仍使用全局规则。
 - `dynamicMenus` 从接口取分类。`target` 在打开分类时才求值，所以里面可以用 `page`；求值为空的条目作为分组标题。
+- 分类要按变量、缓存或别的计算得出，而不是来自某个接口时，`dynamicMenus` 写 `script`（`js` 里的函数名），不写 `url`。打开发现页时运行这个函数，它返回分类数组；`list` 默认取数组的每一项，`title` 默认 `$.title`，`target` 默认 `$.url`，`url` 里的 `{{page}}` 在打开分类时换成页码，没有 `url` 的条目是分组标题。也可以像兼容书源的 `exploreUrl` 那样返回 `名称::地址` 文本：按行或 `&&` 分隔，只按第一个 `::` 切分，没有 `::` 的行是分组标题，从兼容书源迁移时拼文本的 JS 可以原样保留（返回 JSON 文本时按数组处理）。返回值的形状不同时照样可以自己写 `list`、`title`、`target`，这时不再按 `::` 拆分。函数的 `ctx.stage` 是 `menus`，可以读 `ctx.vars`、发请求、读写 `cache`，但和发现阶段一样不能打开网页。函数出错时，有固定分类就只显示固定分类，没有就报出原因。
+
+```json
+"js": "function menus(ctx) {\n  var kinds = ctx.vars.mode === '听书' ? ['有声'] : ['玄幻', '都市'];\n  return [{ title: '分类' }].concat(kinds.map(function (k) {\n    return { title: k, url: '/list?kind=' + encodeURIComponent(k) + '&page={{page}}' };\n  }));\n}",
+"explore": {
+  "dynamicMenus": { "script": "menus" },
+  "list": "$.data.books[*]",
+  "fields": { "name": "$.name", "bookUrl": "{{server}}/book/{{$.id}}" }
+}
+```
 - `list` 和 `fields` 与搜索相同。
 
 ### 详情 `detail`
@@ -740,7 +751,7 @@ fn sign(path, ts) {
 | 字段 | 说明 |
 |---|---|
 | `text` | 正文文本。可以包含 `<img src="…">`，阅读器会显示为插图 |
-| `images` | 图片地址列表（漫画） |
+| `images` | 图片地址列表（漫画）；也可以是 `data:image/…;base64,…` 内嵌图片，应用会解码后存成缓存文件，`imageDecode` 同样作用于它 |
 | `audio` | 音频地址（听书） |
 | `video` | 这一集的视频流地址（如 mp4、m3u8），由应用自带的播放页播放。每次切集都会重新请求，地址带时效也没关系 |
 | `mediaError` | 可选。`audio` / `video` 求值为空时显示给用户的原因，可以读取附加请求的结果（例如「这本书没有真人录音版」）。不写或求值为空时，应用从附加请求和主请求里第一个 `code` 不为 0 的响应归纳原因（如「音频接口返回失败：ILLEGAL_ACCESS（code=110）」） |
@@ -789,6 +800,7 @@ fn sign(path, ts) {
 ```
 
 - `algorithm` 支持 AES 和 3DES 的 ECB、CBC、CTR、OFB、CFB 模式。`key`、`iv` 可以是文本（按 UTF-8）或字节。
+- `iv` 总是按表达式求值（没有 `ivEncoding`）：文本 IV 写 `"iv": "= '97b60394abc2fbe1'"`，16 个字符即 16 字节；十六进制 IV 写 `"iv": "= hexBytes('39376236303339346162633266626531')"`。不要把文本 IV 交给 `hexBytes`，`hexBytes('97b60394abc2fbe1')` 只得到 8 字节。
 - 一章里的图片共用同一组参数。下载到的内容本身已经是图片时不解密。
 - 不写 `keyEncoding` 时保留既有规则语义：固定文本须写成 `"key": "= '0123456789abcdef'"`，十六进制密钥可写成 `"key": "= hexBytes(d.key)"`。裸文本是选择器，不是密钥字面值；求值为空会明确报错。
 - 显式设置 `keyEncoding: "utf8"` 或 `"hex"` 后，`key` 接受字面文本、模板或表达式，并按指定编码转换。hex 必须是完整的十六进制字节。静态密钥在导入时校验长度，动态密钥在取正文时校验；AES 支持 16/24/32 字节，3DES 为 24 字节。
@@ -808,7 +820,7 @@ fn sign(path, ts) {
 }
 ```
 
-示例密钥仅用于说明格式，请换成实际密钥。`ivPrefixBytes` 只接受数字 `16`，不能同时声明 `iv`（空字符串也不允许），算法限 AES/CBC/PKCS5Padding 或 PKCS7Padding。每张图片独立截取 IV，章内只共用密钥；普通 JPEG/PNG/GIF/BMP/WebP/AVIF/HEIF 会直接保存，允许加密与明文混合。单张下载仍限 20 MiB、每批最多 4 张并发，使用异步系统加密接口。截断密文、错误密钥或解密后不是支持的图片时，阅读加载返回「正文图片解密失败」，不把密文地址交给图片控件。解密参数和请求头都参与图片缓存标识；不写新字段的原有固定 IV、AES/3DES 及其他模式保持兼容。
+示例密钥仅用于说明格式，请换成实际密钥。`ivPrefixBytes` 只接受数字 `16`，不能同时声明 `iv`（空字符串也不允许），算法限 AES/CBC/PKCS5Padding 或 PKCS7Padding。每张图片独立截取 IV，章内只共用密钥；普通 JPEG/PNG/GIF/BMP/WebP/AVIF/HEIF 会直接保存，允许加密与明文混合。单张下载仍限 20 MiB、每批最多 4 张并发，使用异步系统加密接口。截断密文、错误密钥或解密后不是支持的图片时，这一张图片显示「图片未能显示」和具体原因（如「正文图片解密失败：…」），本章其余图片照常显示，不把密文地址交给图片控件；有图片失败的章节不写入正文缓存，刷新本章或重新打开会重试。解密参数和请求头都参与图片缓存标识；不写新字段的原有固定 IV、AES/3DES 及其他模式保持兼容。
 
 #### 自定义图片字节脚本
 
@@ -851,9 +863,9 @@ image.hmac('SHA256', bytes, keyHex)
 
 `keyHex`、`ivHex` 必须由完整十六进制字节组成。加解密支持 AES/3DES/DESEDE、ECB/CBC/CTR/OFB/CFB 模式及 NoPadding/PKCS5Padding/PKCS7Padding，最终可用组合由设备系统加密框架决定；ECB 不传 IV，其他模式的 IV 必须匹配块长度。摘要支持 MD5、SHA1、SHA224、SHA256、SHA384、SHA512、SM3；HMAC 组合以设备支持为准。不要在函数库顶层执行图片处理，或声明与图片助手 `image` 冲突的顶层变量；在处理函数内调用它。
 
-每张图使用新建的后台 QuickJS 会话，执行后销毁，不共享全局状态。图片脚本不提供正文阶段的 `native`/网络/Cookie/文件/登录接口。下载每批最多 4 张，脚本全局串行，最多保留 4 个运行或排队任务；排队最长 30 秒。输入和输出各不超过 20 MiB，QuickJS 内存上限 96 MiB，脚本 CPU 预算 2 秒、总耗时预算 10 秒；每张图最多 16 次助手调用，助手输入和输出累计不超过 80 MiB。取消章节加载会取消等待、下载和运行中的任务，失败或取消不会缓存处理结果。
+每张图使用新建的后台 QuickJS 会话，执行后销毁，不共享全局状态。图片脚本不提供正文阶段的 `native`/网络/Cookie/文件/登录接口。下载每批最多 4 张，脚本全局串行，最多保留 4 个运行或排队任务，再多的图片等待空位（例如当前章与预加载的相邻章同时解密）；从开始等待算起最长 60 秒。输入和输出各不超过 20 MiB，QuickJS 内存上限 96 MiB，脚本 CPU 预算 2 秒、总耗时预算 10 秒；每张图最多 16 次助手调用，助手输入和输出累计不超过 80 MiB。取消章节加载会取消等待、下载和运行中的任务，失败或取消不会缓存处理结果。
 
-缓存标识包含书源、图片 URL、请求头、脚本代码、函数名、配置、参数、索引和普通图片处理开关。脚本报错、超限、返回错误类型或无效图片，会显示 `content.imageDecode.script` 与函数名，供书源作者定位。应用「后台脚本线程验证」包含二进制边界、宿主隔离、系统加密和取消恢复的真机验证项。
+缓存标识包含书源、图片 URL、请求头、脚本代码、函数名、配置、参数、索引和普通图片处理开关。脚本报错、超限、返回错误类型或无效图片时，只有这一张图片失败：它的位置显示原因（带 `content.imageDecode.script` 与函数名），供书源作者定位，本章其余图片照常显示。应用「后台脚本线程验证」包含二进制边界、宿主隔离、系统加密和取消恢复的真机验证项。
 
 `links` 在正文末尾加按钮。按钮有两种：打开一个网页，或者发一个请求。
 

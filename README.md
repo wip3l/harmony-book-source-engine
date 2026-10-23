@@ -3,7 +3,7 @@
 HarmonyOS（ArkTS）书源解析内核，从[开源轻页（legado-harmony）](https://github.com/wip3l/legado-harmony)中拆出，供其他鸿蒙阅读类应用复用。
 
 - **兼容书源**：读取阅读（Legado）格式书源，支持 CSS / XPath / JSONPath / 正则规则、Java 正则方言转换、`@js:` 与 `<js>` 脚本、登录与网页验证。
-- **原生书源**：声明式规则、表达式与 `lib` 函数库；支持顶层 `js` JavaScript 函数库，以及搜索、发现、详情、目录、正文的后台 `script` 阶段。
+- **原生书源**：声明式规则、表达式与 `lib` 函数库；支持顶层 `js` JavaScript 函数库，以及搜索、发现、详情、目录、正文的后台 `script` 阶段；图片可按标准算法或 `imageDecode.script` 字节脚本解密，封面支持 `coverDecode` 与 `coverHeaders`。
 - **请求层**：HTTP 客户端、Cookie、TLS 例外、Basic / Digest 认证、书源限流与重试。
 - **脚本运行时**：原生书源使用 QuickJS 函数库与后台会话，受控接口提供请求、状态、登录和网页交互；兼容书源保留轻量解释器、分阶段 ArkWeb 与 QuickJS 影子/灰度迁移。
 - **原生书源设置**：支持脚本登录、发送验证码、动作按钮与动态变量选项；提示、刷新发现页和网页验证由宿主接入 `NativeSourceInteraction`。
@@ -82,6 +82,7 @@ DEVECO_HOME="/c/Program Files/Huawei/DevEco Studio" node scripts/web-book-fetch-
 | `native-script-check` | 后台脚本：阶段返回值、请求与状态、登录和界面交互、动态选项、预算与取消 |
 | `analyze-rule-check` | 兼容书源选择器与属性提取，结果与 `scripts/fixtures/analyze-rule-golden.json` 比对，并打印取字段耗时 |
 | `source-cover-check` | 封面解密参数校验、图片嗅探与解密 |
+| `source-image-options-check` | 图片解密选项：`ivPrefixBytes` 与 `keyEncoding` 校验、图片字节脚本声明、分类菜单的 `list`/`fields` 覆盖、`book.url` 误用提示、目录首页地址优先级与 `coverHeaders` |
 | `page-candidate-url-check` | 搜索与发现地址的页码候选写法 |
 | `source-request-support-check` | 请求层：`Set-Cookie` 拆分、相对地址解析、`concurrentRate` 解析、规则变量表 |
 | `source-script-runtime-check` | 脚本路由、异步 `webJs`、动态请求头缓存控制 |
@@ -91,7 +92,11 @@ DEVECO_HOME="/c/Program Files/Huawei/DevEco Studio" node scripts/web-book-fetch-
 | `source-engine-host-check.cjs` | 可选宿主端口：串行与并发执行器、Cookie、持久化、取消、原生书源导入 |
 | `web-book-fetch-wait-check.cjs` | 网页抓取的等待条件：等待时长、条件未满足时保留页面、无效条件立即失败 |
 
-这些脚本只在 Node 里跑纯逻辑，平台 API 用替身代替，不能代替真机验证。
+这些脚本只在 Node 里跑纯逻辑，平台 API 用替身代替，不能代替真机验证。`scripts/image-binary-probe.mjs` 是另一类工具：用 OpenHarmony native SDK 编译生产用的 QuickJS 图片字节提取代码，通过 hdc 在真机上直接运行，不需要安装应用：
+
+```bash
+node scripts/image-binary-probe.mjs <OpenHarmony native SDK 路径> <hdc 路径> <设备 ID>
+```
 
 ## 许可
 

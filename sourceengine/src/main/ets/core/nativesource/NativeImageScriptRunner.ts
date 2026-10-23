@@ -11,6 +11,7 @@ export interface NativeImageScriptContext {
 /** Image-only session: no stage host, cookies, network, storage or login APIs. */
 export class NativeImageScriptRunner {
   static readonly MAX_BYTES: number = 20 * 1024 * 1024;
+  private static readonly QUEUE_TIMEOUT_MS: number = 60000;
   private static sequence: number = 0;
   private static queue: number[] = [];
   private static active: boolean = false;
@@ -44,15 +45,20 @@ export class NativeImageScriptRunner {
     if (cancelled()) throw new Error('书源请求已取消');
     const executor = SourceEngineHost.imageScripts();
     if (executor) return await executor.run(code, input, cancelled);
-    // At most four downloaded buffers are retained; only one runtime is active.
-    if (this.queue.length + (this.active ? 1 : 0) >= 4) throw new Error('图片脚本队列已满，请稍后重试');
+    // At most four downloaded buffers are queued; only one runtime is active. When the queue is full (the current
+    // chapter and a preloading neighbour decode at the same time) wait for room instead of failing the image.
+    const queuedAt = Date.now();
+    while (this.queue.length + (this.active ? 1 : 0) >= 4) {
+      if (cancelled()) throw new Error('书源请求已取消');
+      if (Date.now() - queuedAt >= this.QUEUE_TIMEOUT_MS) throw new Error('图片脚本排队超时');
+      await new Promise<void>((resolve): void => { setTimeout(resolve, 25); });
+    }
     const ticket = ++this.sequence;
     this.queue.push(ticket);
-    const queuedAt = Date.now();
     try {
       while (this.active || this.queue[0] !== ticket) {
         if (cancelled()) throw new Error('书源请求已取消');
-        if (Date.now() - queuedAt >= 30000) throw new Error('图片脚本排队超时');
+        if (Date.now() - queuedAt >= this.QUEUE_TIMEOUT_MS) throw new Error('图片脚本排队超时');
         await new Promise<void>((resolve): void => { setTimeout(resolve, 25); });
       }
       if (cancelled()) throw new Error('书源请求已取消');

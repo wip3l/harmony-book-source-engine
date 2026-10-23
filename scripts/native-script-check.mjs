@@ -365,6 +365,86 @@ try {
     bad: { options: [], error: '测速失败' },
   }, '动态选项：成功给出列表，失败给出原因');
 
+  // 脚本分类：dynamicMenus 写 script 时不发请求，函数返回分类数组。
+  const menuSource = define({
+    ...base,
+    vars: [{ key: 'mode', label: '模式', options: ['小说', '听书'], default: '小说' }],
+    js: `
+      function menus(ctx) {
+        var kinds = ctx.vars.mode === '听书' ? ['有声'] : ['玄幻', '都市'];
+        return [{ title: ctx.stage + ':' + ctx.vars.mode }].concat(kinds.map(function (k) {
+          return { title: k, url: '/list?kind=' + encodeURIComponent(k) + '&page={{page}}' };
+        }));
+      }
+      function brokenMenus() { throw new Error('分类坏了'); }
+    `,
+    explore: {
+      menus: [{ title: '固定', url: '/fixed' }],
+      dynamicMenus: { script: 'menus' },
+      list: '$.books[*]',
+      fields: { name: '$.name', bookUrl: '$.id' },
+    },
+  });
+  host = scriptHost(async (request) => JSON.stringify({ books: [{ name: request.url, id: '/b/1' }] }));
+  const menuRunner = new NativeSourceRunner(menuSource, host, {});
+  const scriptMenus = await menuRunner.exploreMenus();
+  equal(scriptMenus.map((m) => [m.title, !!m.target]),
+    [['固定', true], ['menus:小说', false], ['玄幻', true], ['都市', true]], '脚本分类：没有 url 的是分组标题');
+  equal(host.requests.length, 0, '脚本分类不发请求');
+  const opened = await menuRunner.explore(scriptMenus[3].target, 2);
+  equal(opened[0].name, 'https://api.example.com/list?kind=%E9%83%BD%E5%B8%82&page=2', '打开脚本分类时 {{page}} 换成页码');
+  equal((await new NativeSourceRunner(menuSource, scriptHost(respond), { mode: '听书' }).exploreMenus()).map((m) => m.title),
+    ['固定', 'menus:听书', '有声'], '脚本分类读得到书源变量');
+  const customMenus = define({
+    ...base, js: 'function menus() { return { data: [{ n: \'甲\', id: 7 }] }; }',
+    explore: {
+      dynamicMenus: { script: 'menus', list: '$.data[*]', title: '$.n', target: '= "/k/" + $.id + "?p=" + page' },
+      list: '$.books[*]', fields: { name: '$.name', bookUrl: '$.id' },
+    },
+  });
+  const customRunner = new NativeSourceRunner(customMenus, scriptHost(async () => '{"books":[{"name":"x","id":"/b"}]}'), {});
+  const customEntries = await customRunner.exploreMenus();
+  equal(customEntries.map((m) => m.title), ['甲'], '脚本分类也可以自己写 list、title');
+  await customRunner.explore(customEntries[0].target, 3);
+  // 与兼容书源 exploreUrl 相同的“名称::地址”文本：按行或 && 分隔，没有 :: 的是分组标题。
+  const textMenus = define({
+    ...base,
+    js: "function menus() { return '排行\\n 热门 :: /rank/hot?page={{page}} && 完结::/rank/end?a=1::2\\n\\n&&'; }\n" +
+      "function jsonMenus() { return JSON.stringify([{ title: 'JSON', url: '/j?p={{page}}' }]); }",
+    explore: {
+      menus: [{ title: '固定', url: '/fixed' }],
+      dynamicMenus: { script: 'menus' },
+      list: '$.books[*]',
+      fields: { name: '$.name', bookUrl: '$.id' },
+    },
+  });
+  host = scriptHost(async (request) => JSON.stringify({ books: [{ name: request.url, id: '/b/1' }] }));
+  const textRunner = new NativeSourceRunner(textMenus, host, {});
+  const textEntries = await textRunner.exploreMenus();
+  equal(textEntries.map((m) => [m.title, !!m.target]), [['固定', true], ['排行', false], ['热门', true], ['完结', true]],
+    '“名称::地址”文本：按行和 && 拆分，空段跳过，没有 :: 的是分组标题');
+  equal((await textRunner.explore(textEntries[2].target, 4))[0].name, 'https://api.example.com/rank/hot?page=4',
+    '文本分类的地址去掉两边空白，{{page}} 换成页码');
+  equal((await textRunner.explore(textEntries[3].target, 1))[0].name, 'https://api.example.com/rank/end?a=1::2',
+    '只按第一个 :: 切分，地址里的 :: 保留');
+  const jsonText = define({ ...textMenus, explore: { ...textMenus.explore, menus: undefined, dynamicMenus: { script: 'jsonMenus' } } });
+  equal((await new NativeSourceRunner(jsonText, scriptHost(respond), {}).exploreMenus()).map((m) => m.title), ['JSON'],
+    '返回 JSON 文本时仍按数组取');
+  const brokenOnly = define({ ...menuSource, explore: { ...menuSource.explore, menus: undefined, dynamicMenus: { script: 'brokenMenus' } } });
+  await rejects(new NativeSourceRunner(brokenOnly, scriptHost(respond), {}).exploreMenus(), /发现分类脚本 brokenMenus：.*分类坏了/,
+    '只有脚本分类且出错时报出原因');
+  const brokenWithFixed = define({ ...menuSource, explore: { ...menuSource.explore, dynamicMenus: { script: 'brokenMenus' } } });
+  equal((await new NativeSourceRunner(brokenWithFixed, scriptHost(respond), {}).exploreMenus()).map((m) => m.title), ['固定'],
+    '脚本分类出错时保留固定分类');
+  equal(NativeSourceSpec.scriptFunctions(menuSource), ['menus'], '导入检查覆盖脚本分类');
+  equal(NativeSourceSpec.validate(menuSource), [], '只写 script 的 dynamicMenus 是合法的');
+  invalid((o) => { o.explore = { dynamicMenus: { script: 'm', url: '/nav' }, list: '$', fields: { name: '$', bookUrl: '$' } }; },
+    /写了 script 就不要写 url/, 'script 与 url 不能同时写');
+  invalid((o) => { o.explore = { dynamicMenus: { url: '/nav' }, list: '$', fields: { name: '$', bookUrl: '$' } }; },
+    /需要 url、list、title 和 target，或者写 script/, '没有 script 时仍要写全请求式分类');
+  invalid((o) => { o.explore = { dynamicMenus: { script: 'm-x' }, list: '$', fields: { name: '$', bookUrl: '$' } }; },
+    /explore\.dynamicMenus\.script 必须是 js 里的函数名/, '脚本分类的函数名不合法');
+
   host = scriptHost(respond);
   const wrong = await new NativeSourceRunner(uiSource, host, {}).submitLogin({ user: '小明', pass: 'nope' });
   equal([wrong.ok, wrong.message, host.saved.credential], [false, '密码不对', null], '脚本登录失败');
