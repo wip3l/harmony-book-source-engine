@@ -290,6 +290,24 @@ try {
   equal(NativeJsPrelude.missingMessage(['detail', 'toc'], ['detail']), 'js 里没有阶段 script 用到的函数 “toc”',
     '导入检查：缺少函数');
 
+  // ---------- 脚本请求也带顶层 headers（按作用域求值，脚本给的同名优先），device.ua 取求值后的 UA ----------
+  const headerSource = define({
+    ...base,
+    vars: [{ key: 'line', options: ['甲'], default: '甲' }],
+    headers: { 'User-Agent': 'UA-{{vars.line}}', 'X-Line': '= vars.line', Accept: 'text/html' },
+    js: `
+      function search(ctx) {
+        const echoed = http.request({ url: '/echo', headers: { accept: 'application/json' } }).json();
+        return [{ name: JSON.stringify(echoed.headers), author: device.ua, bookUrl: '/x' }];
+      }`,
+    search: { script: 'search' },
+  });
+  host = scriptHost(respond);
+  const headerBooks = await new NativeSourceRunner(headerSource, host, {}).search('x', 1);
+  equal([JSON.parse(headerBooks[0].name), headerBooks[0].author],
+    [{ 'User-Agent': 'UA-甲', 'X-Line': '甲', accept: 'application/json' }, 'UA-甲'],
+    '脚本请求合并求值后的顶层请求头，device.ua 用求值后的 User-Agent');
+
   // ---------- 阶段 3：提示、刷新、网页、按钮、动态选项、脚本登录 ----------
   const uiSource = define({
     ...base,
@@ -364,6 +382,16 @@ try {
     line: { options: ['甲', '乙', '丙', 'line'], error: '' },
     bad: { options: [], error: '测速失败' },
   }, '动态选项：成功给出列表，失败给出原因');
+  const optionDefinition = define({
+    ...base,
+    vars: [{ key: 'line', options: ['甲'], optionsScript: 'lines' }, { key: 'mode', options: ['小说', '听书'] }],
+    js: 'function lines() { return ["甲", "乙"]; }',
+    search: { script: 'lines' },
+  });
+  equal(NativeSourceRunner.resolveVars(optionDefinition, { line: '乙', mode: '漫画' }), { line: '乙', mode: '小说' },
+    '写了 optionsScript 的变量保留脚本给出的值，其余变量不在 options 里仍回退');
+  equal(NativeSourceRunner.resolveVars(optionDefinition, { line: '' }), { line: '甲', mode: '小说' },
+    'optionsScript 变量没有保存值时用默认值');
 
   // 脚本分类：dynamicMenus 写 script 时不发请求，函数返回分类数组。
   const menuSource = define({

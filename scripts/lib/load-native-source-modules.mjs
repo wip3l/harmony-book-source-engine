@@ -18,6 +18,8 @@ const MODULES = [
   'core/nativesource/NativeSourceInteraction.ts',
   'core/nativesource/NativeSourceSpec.ts',
   'core/nativesource/NativeSourceRunner.ts',
+  'model/data/Book.ts',
+  'core/nativesource/NativeSourceImport.ts',
   'core/http/NetworkErrorText.ts',
 ];
 

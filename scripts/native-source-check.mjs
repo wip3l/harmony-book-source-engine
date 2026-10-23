@@ -13,6 +13,16 @@ function equal(actual, expected, message) {
   const b = JSON.stringify(expected);
   if (a !== b) throw new Error(`${message}\n  expected: ${b}\n  actual:   ${a}`);
 }
+async function rejectsWith(promise, pattern, message) {
+  assertions++;
+  let text = '';
+  try {
+    await promise;
+  } catch (e) {
+    text = e.message;
+  }
+  if (!pattern.test(text)) throw new Error(`${message}：应当报错，实际：${text || '未报错'}`);
+}
 
 try {
   // ---------- 表达式 ----------
@@ -685,7 +695,7 @@ try {
   const socialRunner = new NativeSourceRunner(socialDefinition, socialHost, {});
 
   equal(await socialRunner.checkLogin(), { ok: true, name: '读者甲', message: '' }, '登录检查');
-  equal(socialHost.requests[0].headers, { Cookie: 'sessionid=abc123' }, '登录检查带上已保存的 Cookie');
+  equal(socialHost.requests[0].headers, { 'User-Agent': 'check', Cookie: 'sessionid=abc123' }, '登录检查带上已保存的 Cookie，并带顶层请求头');
   responses['/me'] = { code: 401 };
   equal((await socialRunner.checkLogin()).ok, false, '登录失效');
 
@@ -693,9 +703,9 @@ try {
   const shelf = socialMenus.find((m) => m.title === '我的书架');
   equal(!!shelf, true, '登录后出现个人分类');
   await socialRunner.explore(shelf.target, 1);
-  equal(socialHost.requests[socialHost.requests.length - 1].headers, { Cookie: 'sessionid=abc123' }, '个人分类附带请求头');
+  equal(socialHost.requests[socialHost.requests.length - 1].headers, { 'User-Agent': 'check', Cookie: 'sessionid=abc123' }, '个人分类附带请求头');
   await socialRunner.explore(socialMenus.find((m) => m.title === '小说榜').target, 1);
-  equal(socialHost.requests[socialHost.requests.length - 1].headers, {}, '其他分类不带登录凭据');
+  equal(socialHost.requests[socialHost.requests.length - 1].headers, { 'User-Agent': 'check' }, '其他分类不带登录凭据');
 
   await socialRunner.detail(book);
   equal(socialHost.requests[socialHost.requests.length - 1].webView, true, '详情请求声明网页渲染');
@@ -751,19 +761,54 @@ try {
   equal([searchRequest.charset, searchRequest.retry, searchRequest.primary], ['gbk', 3, true],
     '字符集、重试上限，主请求带验证标记');
   await extendedRunner.detail(book);
-  equal(extendedHost.requests[extendedHost.requests.length - 1].headers, { Authorization: 'Bearer T1' },
+  equal(extendedHost.requests[extendedHost.requests.length - 1].headers, { 'User-Agent': 'check', Authorization: 'Bearer T1' },
     '缓存值可用于后续请求');
   const tokenRequests = extendedHost.requests.filter((request) => request.url.includes('/token'));
   equal([tokenRequests.length, tokenRequests[0].primary], [1, false], '有效期内只取一次，取值请求不触发验证');
   extendedHost.clearCache();
   delete responses['/token'];
   await extendedRunner.detail(book);
-  equal(extendedHost.requests[extendedHost.requests.length - 1].headers, {}, '取值失败时为 null，值为空的请求头不发送');
+  equal(extendedHost.requests[extendedHost.requests.length - 1].headers, { 'User-Agent': 'check' }, '取值失败时为 null，值为空的请求头不发送');
   const comicWithHeaders = await extendedRunner.content({ ...book, type: 'comic' },
     { url: 'https://api.example.com/content?item_id=m1', title: '', index: 0 });
   equal(comicWithHeaders.images.length, 2, '漫画返回图片地址列表');
   equal(comicWithHeaders.mediaHeaders, { Referer: 'https://api.example.com/' }, '媒体请求头按模板渲染');
   invalid((s) => { s.cache = { token: { url: 'x' } }; }, '缓存缺少取值规则');
+
+  // ---------- 顶层 headers：每个请求按当前作用域求值，与本次请求的请求头合并 ----------
+  const dynamicHeaders = JSON.parse(JSON.stringify(sample));
+  dynamicHeaders.cache = { token: { url: '{{vars.server}}/token', value: '= data.token', ttl: 60 } };
+  dynamicHeaders.headers = {
+    'User-Agent': 'check',
+    'X-Mode': '{{vars.mode}}',
+    Authorization: "= token ? 'Bearer ' + token : ''",
+    Referer: '{{server}}/',
+    'X-Empty': '{{vars.nothing}}'
+  };
+  dynamicHeaders.detail.headers = { referer: 'https://detail.example.com/', 'x-mode': '' };
+  responses['/token'] = { token: 'T9' };
+  const dynamicHost = createTestHost(JsonPathEvaluator, respond);
+  const dynamicDefinition = NativeSourceSpec.fromObject(dynamicHeaders);
+  const dynamicRunner = new NativeSourceRunner(dynamicDefinition, dynamicHost, { mode: '听书' });
+  await dynamicRunner.search('书', 1);
+  equal(dynamicHost.requests.find((request) => request.url.includes('/token')).headers,
+    { 'User-Agent': 'check', 'X-Mode': '听书' }, '取缓存时引用缓存名和 let 的顶层请求头先不带');
+  equal(dynamicHost.requests.find((request) => request.url.includes('/search?')).headers, {
+    'User-Agent': 'check', 'X-Mode': '听书', Authorization: 'Bearer T9', Referer: 'https://api.example.com/'
+  }, '顶层请求头的模板与表达式按作用域求值，值为空的不发送');
+  await dynamicRunner.detail(book);
+  equal(dynamicHost.requests[dynamicHost.requests.length - 1].headers, {
+    'User-Agent': 'check', 'X-Mode': '听书', Authorization: 'Bearer T9', referer: 'https://detail.example.com/'
+  }, '阶段同名请求头（不分大小写）优先，阶段里值为空的不覆盖顶层');
+  const scriptedHeaders = JSON.parse(JSON.stringify(dynamicHeaders));
+  scriptedHeaders.headers = { 'X-Bad': '= missingName + 1' };
+  await rejectsWith(new NativeSourceRunner(NativeSourceSpec.fromObject(scriptedHeaders), createTestHost(JsonPathEvaluator, respond), {})
+    .search('书', 1), /规则 headers\.X-Bad 出错/, '顶层请求头求值出错时指出是哪一个');
+  const importedSource = mods.NativeSourceImport.toBookSource(dynamicDefinition);
+  equal(JSON.parse(importedSource.header), { 'User-Agent': 'check' }, '书源记录的 header 只留字面值，模板与表达式不原样写入');
+  equal(mods.NativeSourceImport.toBookSource(NativeSourceSpec.fromObject({ ...dynamicHeaders, headers: { A: '{{vars.mode}}' } })).header,
+    '', '全是动态请求头时记录里不写 header');
+  delete responses['/token'];
   invalid((s) => { s.cache = { 'bad-name': { url: 'x', value: '= 1' } }; }, '缓存名称不合法');
 
   // 状态码正常但被判为失败时（例如验证页），提示里用给出的原因
@@ -847,7 +892,7 @@ try {
     { index: 1, label: '个人中心', open: 'https://api.example.com/user' }
   ], '动作按钮：when 生效，open 补全为绝对地址');
   equal(await signedIn.runAction(0), '签到结果：获得 5 积分', '执行动作并返回提示');
-  equal(interactiveHost.requests[interactiveHost.requests.length - 1].headers, { Authorization: 'Bearer TK' },
+  equal(interactiveHost.requests[interactiveHost.requests.length - 1].headers, { 'User-Agent': 'check', Authorization: 'Bearer TK' },
     '动作请求带上登录凭据');
 
   const withButton = await signedIn.content(book, { url: 'https://api.example.com/content?item_id=c1', title: '', index: 0 });

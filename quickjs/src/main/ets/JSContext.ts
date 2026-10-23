@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Modified by the legado-harmony project in 2026 for QuickJS runtime integration.
+ * Modified by the qingye-reader project in 2026 for QuickJS runtime integration.
  */
 
 import { JSValue } from './JSValue';

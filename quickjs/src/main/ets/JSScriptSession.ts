@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 legado-harmony contributors
+ * Copyright (c) 2026 qingye-reader contributors
  * SPDX-License-Identifier: MIT
  */
 
