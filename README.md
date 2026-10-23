@@ -1,6 +1,6 @@
 # harmony-book-source-engine
 
-HarmonyOS（ArkTS）书源解析内核，从[开源轻页（legado-harmony）](https://github.com/wip3l/legado-harmony)中拆出，供其他鸿蒙阅读类应用复用。
+HarmonyOS（ArkTS）书源解析内核，从[开源轻页（qingye-reader）](https://github.com/wip3l/qingye-reader)中拆出，供其他鸿蒙阅读类应用复用。
 
 - **兼容书源**：读取阅读（Legado）格式书源，支持 CSS / XPath / JSONPath / 正则规则、Java 正则方言转换、`@js:` 与 `<js>` 脚本、登录与网页验证。
 - **原生书源**：声明式规则、表达式与 `lib` 函数库；支持顶层 `js` JavaScript 函数库，以及搜索、发现、详情、目录、正文的后台 `script` 阶段；图片可按标准算法或 `imageDecode.script` 字节脚本解密，封面支持 `coverDecode` 与 `coverHeaders`。
