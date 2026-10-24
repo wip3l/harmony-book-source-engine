@@ -86,3 +86,13 @@ node scripts/neutral-source-engine-check.mjs
 ```
 
 改动 `AnalyzeRule`（选择器、属性提取、旧式写法）后再运行 `node --experimental-strip-types scripts/analyze-rule-check.mjs`。它用 `scripts/lib/load-analyze-rule.mjs` 把 AnalyzeRule 及其依赖加载进 Node（系统模块换成空桩，脚本会自动加上 `--experimental-transform-types` 重跑），把一组页面 × 规则的结果与 `scripts/fixtures/analyze-rule-golden.json` 比对，并打印 HTML 目录取字段的参考耗时。确认是有意改变选择器行为时，加 `--update` 重写基准。
+
+## 可选的后台纯解析与定义缓存
+
+`SourceEngineHostAdapter.nativeParsing(input, source)` 是可信宿主的后台解析端口，输入输出均为 JSON 字符串。当前仅对宿主通过 `setReaderImagesDeferred(source, true)` 标记的阅读请求启用；未接入时保持原有行为，下载调用不受影响。书源 JSON、规则语法和导入格式不变，不需要重新编写或迁移书源。
+
+宿主在自己的 taskpool/Worker 中调用导出的 `NativePureParser.run(input)`，自行管理队列、优先级和工作线程生命周期。仅把 JSON 请求传入工作线程，不传递 `BookSource` 实例。工作线程启动时初始化一次 `SourceEngineHost`，其 `scripts.allowSynchronousQuickJs` 必须为 `false`；纯解析线程的脚本执行器应拒绝执行。解析器不会安装或替换宿主配置。输入和输出各限制为 8 × 1024 × 1024 个 UTF-16 代码单元；这不是字节数或 CPU 时间预算，宿主仍需限制并发和任务生命周期。
+
+JS 函数库、Cookie 表达式以及带 JS/模板标记的选择器保留原执行上下文和脚本执行器。服务在后台任务前后检查取消状态。后台解析是可选的宿主优化，不会自动创建工作线程，也不保证单独接入就能消除全部滑动卡顿。
+
+`SourceDefinitionCache` 缓存不可变的定义转换字符串，默认最多 8 条且键和值合计不超过 2 Mi 个 UTF-16 代码单元。每个实例绑定一个转换函数，完整原始定义作为键，转换失败不缓存，超大结果直接返回。`NativeSourceImport.importObject` 已接入该缓存，每次仍返回独立的 `BookSource` 实例并刷新转换时间；传入已有书源时保留原合并行为。不要把账号、Cookie、运行变量或可变执行对象放入定义缓存。

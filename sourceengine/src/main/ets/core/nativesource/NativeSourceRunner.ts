@@ -1554,7 +1554,7 @@ export class NativeSourceRunner {
     }
     // Cookie expressions retain their live source-scoped host. Script calls keep the bounded script executor.
     if (this.host.parsePure && !this.expr.requiresScript(text, template) &&
-      !/\bcookie\s*\(/i.test(text + '\n' + (this.definition.lib || ''))) {
+      !/\bcookie\s*\(|js\s*:|<js>|\{\{/i.test(text + '\n' + (this.definition.lib || ''))) {
       return JSON.parse(await this.host.parsePure(JSON.stringify({ kind: 'expression', rule: text,
         library: this.definition.lib || '', scope: scope.snapshot(), template })));
     }
@@ -1573,7 +1573,7 @@ export class NativeSourceRunner {
         const current = scope.get('item');
         const jsonItems = this.jsonRule(spec, current, true);
         const content = typeof current === 'string' ? current : NativeExpr.toText(current);
-        items = jsonItems !== null ? (jsonItems as NativeValue[]) : this.host.parsePure ?
+        items = jsonItems !== null ? (jsonItems as NativeValue[]) : this.host.parsePure && !/js\s*:|<js>|\{\{/i.test(spec) ?
           JSON.parse(await this.host.parsePure(JSON.stringify({ kind: 'items', content, rule: spec, baseUrl }))) :
           this.host.selectItems(content, spec, baseUrl);
       }
@@ -1647,7 +1647,7 @@ export class NativeSourceRunner {
     if (jsonValue !== null) return jsonValue;
     const content = typeof current === 'string' ? current : NativeExpr.toText(current);
     const baseUrl = NativeExpr.toText(scope.get('baseUrl'));
-    const found: string[] = this.host.parsePure ?
+    const found: string[] = this.host.parsePure && !/js\s*:|<js>|\{\{/i.test(text) ?
       JSON.parse(await this.host.parsePure(JSON.stringify({ kind: 'select', content, rule: text, baseUrl, list }))) :
       this.host.select(content, text, baseUrl, list);
     return list ? found : (found.length > 0 ? found[0] : '');

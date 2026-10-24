@@ -330,3 +330,6 @@ export { NativeImageScriptRunner } from './src/main/ets/core/nativesource/Native
 export { ImageStripOptions, ImageStripRange, NativeImageTransform } from './src/main/ets/core/nativesource/NativeImageTransform';
 export { SourceCoverLoader } from './src/main/ets/core/nativesource/SourceCoverLoader';
 export type { NativeCoverDecodeSpec } from './src/main/ets/core/nativesource/NativeSourceSpec';
+
+export { NativePureParser } from './src/main/ets/core/nativesource/NativePureParser';
+export { SourceDefinitionCache } from './src/main/ets/core/nativesource/SourceDefinitionCache';

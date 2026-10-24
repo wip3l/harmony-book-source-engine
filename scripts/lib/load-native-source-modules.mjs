@@ -9,6 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { readEtsModule, toNodeModuleSource } from './ets-module-staging.mjs';
 
 const MODULES = [
+  'core/nativesource/SourceDefinitionCache.ts',
   'core/nativesource/SourceCoverUrl.ts',
   'core/rule/JsonPathEvaluator.ts',
   'core/concurrency/CooperativeScheduler.ts',
