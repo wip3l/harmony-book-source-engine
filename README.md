@@ -109,6 +109,8 @@ node scripts/image-binary-probe.mjs <OpenHarmony native SDK 路径> <hdc 路径>
 
 本项目以 [GNU General Public License v3.0](LICENSE) 发布。使用、修改或分发本项目（包括把它链接进你的应用）时，需要遵守 GPL-3.0 的条款。
 
+LICENSE 末尾附有一条 GPL-3.0 第 7 条附加许可（Harmony Book AI Engine 链接例外 1.0）：允许本项目与 Harmony Book AI Engine 链接并一起分发，AI 引擎部分不受 GPL 约束。这条例外只针对 Harmony Book AI Engine，不适用于其他库或程序；本项目其余部分仍完全按 GPL-3.0 授权。
+
 第三方组件（ohos_quickjs、QuickJS、部分 Huawei N-API 封装代码）分别遵循 MIT 与 Apache-2.0 许可，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与 [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt)。
 
 ## 当前宿主验收
