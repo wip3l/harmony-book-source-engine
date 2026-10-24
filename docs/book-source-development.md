@@ -735,6 +735,15 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 
 连第一页在内最多 200 页，拼接后的正文最多 8 MB，超出部分不取，调试页会记下还有几页没取。
 
+### 常见能力误区与站点排查
+
+- **签名与加密**：原生规则已有 `hmac(算法, 密钥, 数据)`，需要十六进制签名时可写 `bytesHex(hmac('SHA256', secret, message))`；图片脚本也有 `image.hmac`。无需依赖兼容接口名称 `Convert.hmacString`。HMAC、RSA、GBK 分别属于消息认证、非对称密码和字符编码，不能视为同一种“国密”能力。
+- **图片变换**：`image.reorderStrips` 已支持受限的分片重排；它不是通用 Canvas 或 RGBA 接口。目前没有 `image.blur/crop`，不要在书源中假定存在。纯 JS 解码大图片可能超过图片脚本 CPU 预算。
+- **内嵌图片**：轻页的正文图片管线可将 `data:image/…;base64,…` 解码并写入缓存，解码字节上限 20 MiB，并可继续执行 `imageDecode`。空数据、无效 Base64、超限会给出具体错误。宿主仍需支持该图片格式；旧版失败样本应在目标版本复测，不能把 1×1 图片成功当成全部格式可用的证明。
+- **超时**：底层请求本来就有连接／读取超时；脚本显式 `timeout` 提供的是可配置的单项总预算。`http.all` 并发、图片下载并发和站点限流是不同限制，调高一个不会取消其他限制。
+- **AMP 列表不翻页**：如果 HTML 加上 `page=2/3` 仍返回相同条目，检查页面中的 `amp-list src`；实际分页可能来自它指向的 JSON API，而非 HTML 地址。先核对响应结构及 next/bookmark 字段，再编写 `explore` 请求，不要假定 API 页码没有上限。
+- **重定向到别章**：`http.*` 的 `finalUrl` 是可观测时的最终地址，拿不到时为空；不要把 `url` 当成最终地址，也不要仅凭 HTTP 200 判定章节正确。缺少 finalUrl 时，可结合站点提供的章节标识或 canonical 校验，但 canonical 本身是页面声明，不能替代网络层的最终地址。
+
 ### 正文的附加请求与评论
 
 **附加请求 `fetch`** 在主请求之后依次执行，结果以名称绑定为变量。响应是 JSON 时为解析后的对象，否则为文本；请求失败或 `when` 为假时为 `null`，由规则自行降级：
@@ -905,12 +914,54 @@ function restoreImage(bytes, ctx) {
 |---|---|
 | `when` | 为假时整个评论功能不生效，也不发统计请求 |
 | `stats` | 统计接口，结果绑定为 `stats` |
-| `counts` | 每段评论数：对象的键（或列表下标）是正文行号，值是条数。行号按 `text` 结果的换行切分，从 0 开始。写了 `paragraphUrl` 时必填 |
+| `counts` | 每段评论数：对象的键（或列表下标）是正文行号，值是条数。行号按 `text` 结果的换行切分，从 0 开始。写了 `paragraphUrl` 或 `page` 时必填 |
 | `paragraphUrl` | 段评页地址，可用 `para.index`、`para.count`、`para.text`（该段前 90 个字） |
 | `chapterUrl` | 整章评论页地址，可用 `total`（各段条数之和）。有值时章末显示「本章说」入口 |
+| `page`、`chapterPage` | 新增的内联段评／章评页面，见下；需宿主接入支持 |
 | `max` | 一章最多显示多少个气泡，默认 60，上限 300 |
 
-`paragraphUrl` 和 `chapterUrl` 至少写一个。统计接口失败时正文照常显示，只是没有气泡。评论只对文本正文生效。
+`paragraphUrl`、`chapterUrl`、`page`、`chapterPage` 至少写一个。统计接口失败时正文照常显示，只是没有气泡。评论只对文本正文生效。
+
+#### 内联评论页：点击后取数和生成 HTML
+
+`page` 是段评，`chapterPage` 是章评。正文加载只准备入口和有界的上下文，不逐段生成 HTML，也不执行页面自己的 `fetch`。点击后，页面规则可以读取正文阶段的变量、`stats`，以及当前段落的 `para.index/count/text`；章评读取 `total`。
+
+```json
+"comments": {
+  "stats": { "url": "/api/counts?chapter={{chapter.index}}" },
+  "counts": "= stats.counts",
+  "paragraphUrl": "/comments?chapter={{chapter.index}}&paragraph={{para.index}}",
+  "page": {
+    "fetch": {
+      "reviews": { "url": "/api/comments?chapter={{chapter.index}}&paragraph={{para.index}}" }
+    },
+    "title": "第 {{para.index + 1}} 段评论",
+    "height": 0.8,
+    "data": { "paragraph": "= para.text", "items": "= reviews.items" },
+    "html": "<main id='comments'></main><script>for (const item of window.__NATIVE_PAGE_DATA__.items) { const p=document.createElement('p'); p.textContent=item.text; document.getElementById('comments').appendChild(p); }</script>"
+  },
+  "chapterUrl": "/comments?chapter={{chapter.index}}",
+  "chapterPage": { "html": "<p>本章共有 {{total}} 条评论。</p>" }
+}
+```
+
+| 页面字段 | 约定 |
+|---|---|
+| `html` | 必填字符串规则，可为字面 HTML、模板或 `=` 表达式；求值必须返回非空字符串，UTF-8 上限 256 KiB |
+| `data` | 对象，值递归按模板／表达式求值；序列化后 UTF-8 上限 64 KiB。注入 `window.__NATIVE_PAGE_DATA__`，同时提供 `window.__QM_DATA__` 别名；不会自动暴露整个书源上下文 |
+| `fetch` | 最多 3 个附加请求，按声明顺序执行，可使用 `when`；结果直接绑定为声明的名称，如 `reviews`，不是 `fetch.reviews`。请求失败会使本次页面生成失败 |
+| `title` | 字符串模板／表达式，默认“评论”，最多 192 个字符 |
+| `height` | 初始弹层高度比例，0.2–1.0，默认 0.8；读者仍可拖动展开 |
+
+页面在独立的无痕 Web 中以 `about:blank` 加载，书源 HTML 放入仅有 `allow-scripts` 权限的沙箱 iframe。**没有可配置的 `baseUrl` 或站点 origin，不继承站点 Cookie，不提供宿主脚本桥。** 允许内联脚本、内联样式及 `data:` 图片；网络、外链脚本／样式／字体、书源自行加载 iframe、表单提交、页面跳转、文件、定位、弹窗和权限请求被禁止。另禁用 WebRTC 构造器，沙箱不授予同源权限，阻止借用父窗口或新建空白子窗口的接口绕过限制。需要的评论内容由 `page.fetch` 通过引擎请求，使用书源现有的 Cookie、请求头与限流规则。页面可以在已取得的数据内交互；当前没有从页面调用引擎“加载更多”的桥接接口。
+
+一次点击生成页面的总等待上限为 15 秒，最多 8 次引擎请求（包括缓存失效时重建正文上下文），单响应最多 1 MiB，总响应最多 2 MiB；规则表达式和脚本仍受各自运行预算限制。页面显示另有 15 秒等待上限，失败后销毁该 Web，可重试。正文上下文只保留在内存中，最多 4 章，每章 JSON 上限 2 MiB、有效期 5 分钟；不把 HTML、登录信息或评论数据编入正文标记。冷启动或上下文被淘汰后，首次点击可能重新执行正文请求。书源、变量、账号或书籍／章节信息改变时入口失效；重建后段落内容变化也会拒绝旧入口，需刷新本章。
+
+同一类入口同时提供页面和 URL 时优先页面；页面为空、超限或取数失败时，可回退到有效的原 HTTP(S) URL，没有 URL 则显示失败原因。取消和过期入口不自动回退。`data:text/html` 不作为旧 URL 的替代协议开放。
+
+格式版本仍为 1，**不代表所有版本 1 宿主都支持内联页面**。为了兼容旧宿主，必须保留可用的 `paragraphUrl/chapterUrl`；只提供 `page/chapterPage` 的书源可能被旧宿主拒绝导入。不要把格式版本改成 2 来检测这个能力。
+
+轻页的书源调试页会列出内联入口，点击“预览”才执行页面请求，显示 HTML/data 字节数与执行结果，并用同一隔离组件预览。[离线示例书源](examples/native-inline-comments.json) 不请求站点，可验证两段气泡、章末入口、数据注入与本地按钮；这是仅供支持内联页面的宿主使用的 page-only 示例。
 
 ## 原生书源的顶层字段
 
@@ -1244,8 +1295,8 @@ fn sign(path, ts) {
 
 | 接口 | 说明 |
 |---|---|
-| `http.get(地址, 选项?)`、`http.post(地址, 请求体, 选项?)`、`http.request({ url, method, headers, body, charset, retry, webView })` | 同步发请求，返回 `{ ok, status, body, url, error }`，`json()` 解析正文（不是 JSON 时抛错）。相对地址按书源地址补全，也接受 `data:` 地址；请求体是对象时按 JSON 发送并自动加 `Content-Type: application/json`。请求失败不抛错，看 `ok` 和 `status`。响应头拿不到，`Set-Cookie` 会自动保存，用 `cookie.get` 读取 |
-| `http.all([请求, …])` | 一组请求并发发出（每批 8 个），按顺序返回。每项可以是地址或请求对象 |
+| `http.get(地址, 选项?)`、`http.post(地址, 请求体, 选项?)`、`http.request({ url, method, headers, body, charset, retry, webView, timeout })` | 同步发请求，返回 `{ ok, status, body, url, finalUrl, error }`，`json()` 解析正文（不是 JSON 时抛错）。相对地址按书源地址补全，也接受 `data:` 地址；请求体是对象时按 JSON 发送并自动加 `Content-Type: application/json`。请求失败不抛错，看 `ok` 和 `status`。响应头拿不到，`Set-Cookie` 会自动保存，用 `cookie.get` 读取 |
+| `http.all([请求, …], { concurrency, timeout }?)` | 按顺序返回。每项可以是地址或请求对象；默认最多 8 个并发，`concurrency` 可设 1–8 的整数，完成一项就补下一项。`timeout` 为每项的默认超时，可由请求对象中的同名字段覆盖 |
 | `vars.get(名)`、`vars.set(名, 值)` | 书源变量，写入后保存（和书源设置页是同一份），可以写没有在 `vars` 里声明的键 |
 | `temp.get(名)`、`temp.set(名, 值)` | 当前 `NativeSourceRunner` 实例内的临时值；轻页按操作创建运行器，不能依赖它把详情数据传给后续目录操作 |
 | `cache.get(名)`、`cache.put(名, 值, 有效秒数?)` | 内存缓存，按书源分开，有效期默认 600 秒，1 秒到 7 天；重启应用后失效。`cache.set` 是 `put` 的别名 |
@@ -1265,6 +1316,22 @@ fn sign(path, ts) {
 | `browser.render(地址, { waitFor, timeout, js, headers })` | 在内置浏览器里加载页面（等 `waitFor` 对应的元素出现），在页面里求值 `js` 表达式并返回结果，对象会转成 JSON 文本；不写 `js` 时返回渲染后的整页 HTML。`timeout` 单位为秒，默认 15，范围 3 到 60；`js` 是一个表达式，多条语句需包成立即执行的函数。计入请求次数，失败会抛错 |
 
 脚本里的请求和声明式请求走同一条请求层：书源请求头、Cookie、限流、编码识别和重试都一样，但遇到验证页不会自动提示“去验证”，需要时由脚本调用 `browser.verify`。
+
+脚本请求的 `timeout` 单位是**毫秒**，须为 100–60000 的整数；不填则沿用宿主的默认连接/读取超时。显式填写时，从该请求进入宿主开始计算总预算，包括书源限流、重定向、协议重试和浏览器等待；不会因重试重新获得完整预算。批量中尚未取得并发名额的项目还未开始计时，整个脚本仍受下表的总时长预算约束。超时返回 `ok: false` 与错误信息；选项类型或范围错误则在发送前抛错。这里的毫秒与 `browser.render` / `webView.timeout` 的**秒**不同；同时指定时总预算仍以请求 `timeout` 为上限。
+
+```js
+const first = http.get('/api/list?page=1', { timeout: 8000 });
+if (!first.ok) throw new Error(first.error);
+const responses = http.all([
+  '/api/list?page=2',
+  { url: '/api/list?page=3', timeout: 12000 }
+], { concurrency: 4, timeout: 8000 });
+// responses[0] 对应 page=2。每项照常计入 scriptLimits.requests。
+```
+
+请求结果另外提供 `finalUrl`：宿主实际观测到的重定向最终地址。HarmonyOS API 22 及以上通过网络拦截接口取得；浏览器抓取路径取页面最终地址。旧系统或不支持拦截的传输实现返回空字符串，不能把空值当成“没有重定向”。`url` 保持原有的地址解析基准语义。需要防止章节被跳转到别处时，可在 `finalUrl` 非空时验证它；为空时继续核对正文中的章节标识或 canonical。
+
+轻页“其他设置 → 兼容与诊断”提供 HTTP/1.1 兼容模式，作用于后续原生网络请求，不改变浏览器自身的协议选择。默认关闭。HTTPS 的 GET/HEAD 遇到协议异常或内部错误时至多自动尝试一次 HTTP/1.1；只有这次成功才按 origin 在当前进程中记忆 10 分钟，最多保留 128 项。POST 等可能产生副作用的请求不作这种自动重放。`2300999` 仅表示网络内部错误，不足以断定 HTTP/2、DNS 或服务器哪一方有问题。
 
 预算按每次后台函数运行计算，登录、动作按钮、动态选项与脚本分类也适用：
 
@@ -1521,7 +1588,7 @@ fn sign(path, ts) {
 | 表单登录需要 login.form / login.submit 需要 url 和 ok | 表单登录的必填项 |
 | actions 的每一项都需要 label，以及 url、open 或 script | 按钮缺少文字或动作 |
 | cache.xxx 需要 url 和 value | 复用值缺少请求或取值规则 |
-| content.comments 需要 paragraphUrl 或 chapterUrl / 使用 paragraphUrl 时需要 counts | 评论入口的必填项 |
+| content.comments 需要 paragraphUrl、chapterUrl、page 或 chapterPage / 使用 paragraphUrl/page 时需要 counts | 评论入口的必填项；旧宿主不支持 page-only |
 | content.imageDecode … | 见[图片解密](#正文的附加请求与评论)，报错里写明了哪个字段 |
 | coverDecode 需要 AES/CBC/PKCS7Padding、16/24/32 字节的 key，以及 iv 或 ivPrefixBytes:16 | 封面解密参数不完整或密钥长度不对 |
 
@@ -1560,7 +1627,8 @@ fn sign(path, ts) {
 | `content.replace[]` | `pattern`\*、`with`、`flags` |
 | `content.imageDecode` | `algorithm`\*、`key`\*、`iv`、`keyEncoding`、`ivPrefixBytes`；或 `script`\*、`params`、`processPlainImages` |
 | `content.links[]` | `label`\*、`url` 或 `request`\*、`when`、`message` |
-| `content.comments` | `when`、`stats`、`counts`、`paragraphUrl`、`chapterUrl`（两个地址至少一个）、`max` |
+| `content.comments` | `when`、`stats`、`counts`、`paragraphUrl`、`chapterUrl`、`page`、`chapterPage`（四种入口至少一个）、`max` |
+| `content.comments.page/chapterPage` | `html`（必填）、`data`、`title`、`height`、`fetch`；仅支持内联评论页的宿主可用 |
 | `vars[]` | `key`\*、`label`、`options`、`default`、`filter`、`optionsScript` |
 | `voices[]` | `id`\*、`name`\* |
 | `cache.名称` | 请求字段（`url`\*）、`value`\*、`ttl`、`when` |

@@ -159,6 +159,7 @@ export {
   NativeVarItem,
   NativeSourceService
 } from './src/main/ets/core/nativesource/NativeSourceService';
+export { NativeCommentPage } from './src/main/ets/core/nativesource/NativeCommentPage';
 export {
   NativeVarSpec,
   NativeVoiceSpec,

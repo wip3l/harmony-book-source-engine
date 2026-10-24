@@ -1,0 +1,27 @@
+{
+  "sourceFormat": "native",
+  "version": 1,
+  "name": "内联评论离线示例",
+  "url": "https://inline-demo.example",
+  "type": "text",
+  "js": "function demoSearch(ctx) { return [{name:'内联评论示例',bookUrl:'/book',tocUrl:'/toc'}]; }\nfunction demoToc(ctx) { return [{title:'示例章节',url:'/chapter'}]; }\nfunction demoContent(ctx) { return {text:'第一段：点击段尾气泡。\\n第二段：页面无需联网。'}; }",
+  "search": { "script": "demoSearch" },
+  "toc": { "script": "demoToc" },
+  "content": {
+    "script": "demoContent",
+    "comments": {
+      "counts": "= [2, 1]",
+      "page": {
+        "title": "第 {{para.index + 1}} 段评论",
+        "height": 0.7,
+        "data": { "paragraph": "= para.text", "count": "= para.count" },
+        "html": "<style>body{font:18px sans-serif;padding:20px}button{padding:12px}</style><p id='paragraph'></p><p id='count'></p><button onclick='this.textContent=\"已点击\"'>测试本地交互</button><script>const d=window.__NATIVE_PAGE_DATA__;document.getElementById('paragraph').textContent=d.paragraph;document.getElementById('count').textContent='评论数：'+d.count;</script>"
+      },
+      "chapterPage": {
+        "title": "本章评论",
+        "html": "<p>本章共有 {{total}} 条评论。</p>",
+        "data": { "total": "= total" }
+      }
+    }
+  }
+}

@@ -55,10 +55,13 @@ class ProbeRunnerHost extends ProbeExprHost implements NativeRunnerHost {
   async fetch(request: NativeRequest): Promise<NativeResponse> {
     this.requests++;
     const response = await this.http.execute({
-      url: request.url, method: request.method, headers: request.headers, body: request.body || undefined
+      url: request.url, method: request.method, headers: request.headers, body: request.body || undefined,
+      deadlineAt: request.timeoutMs ? Date.now() + request.timeoutMs : undefined,
+      connectTimeout: request.timeoutMs, readTimeout: request.timeoutMs, noTimeoutRetry: !!request.timeoutMs
     });
     return {
       ok: response.success, status: response.statusCode, body: response.body, url: response.url || request.url,
+      finalUrl: response.finalUrl || '',
       error: response.error || ''
     };
   }

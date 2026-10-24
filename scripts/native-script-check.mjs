@@ -96,7 +96,84 @@ const respond = async (request) => {
 };
 
 try {
+  // Final destination survives the synchronous worker bridge; unavailable is explicitly empty.
+  const finalUrlSource = define({ ...base,
+    js: `function search(ctx) { const r = http.get('/redirect'); return [{ name: r.finalUrl || 'unknown', bookUrl: r.url }]; }`,
+    search: { script: 'search' } });
+  const finalHost = scriptHost(respond);
+  finalHost.fetch = async () => ({ ok: true, status: 200, body: '{}', error: '',
+    url: 'https://api.example.com/actual', finalUrl: 'https://api.example.com/actual' });
+  equal((await new NativeSourceRunner(finalUrlSource, finalHost, {}).search('', 1))[0].name,
+    'https://api.example.com/actual', '最终 URL 穿过脚本工作线程桥接');
+  finalHost.fetch = async () => ({ ok: true, status: 200, body: '{}', error: '', url: 'https://api.example.com/redirect' });
+  equal((await new NativeSourceRunner(finalUrlSource, finalHost, {}).search('', 1))[0].name,
+    'unknown', '不可观测的最终 URL 不用原始地址冒充');
   // ---------- 搜索：循环请求、并发请求、默认 list 与 fields ----------
+  const concurrentSource = define({ ...base, search: { script: 'search' }, js: `
+    function search() {
+      return http.all([0,1,2,3,4,5].map(i => ({url:'/item/' + i, timeout:i === 1 ? 700 : undefined})),
+        {concurrency:3, timeout:900}).map(r => ({name:r.body, bookUrl:r.url}));
+    }` });
+  const concurrentHost = scriptHost(respond);
+  let activeRequests = 0, peakRequests = 0, firstFinished = false, filledBeforeSlowFinished = false;
+  let releaseFirst; const firstGate = new Promise(resolve => { releaseFirst = resolve; });
+  concurrentHost.fetch = async request => {
+    concurrentHost.requests.push(request); activeRequests++; peakRequests = Math.max(peakRequests, activeRequests);
+    const index = Number(request.url.split('/').at(-1));
+    if (index === 0) { await firstGate; firstFinished = true; }
+    else {
+      if (index === 3) { filledBeforeSlowFinished = !firstFinished; releaseFirst(); }
+      await sleep(5);
+    }
+    activeRequests--;
+    return { ok:true, status:200, body:String(index), url:request.url, error:'' };
+  };
+  const concurrentBooks = await new NativeSourceRunner(concurrentSource, concurrentHost, {}).search('', 1);
+  equal(concurrentBooks.map(b => b.name), ['0','1','2','3','4','5'], '并发请求按输入顺序返回');
+  equal(peakRequests, 3, 'http.all 使用指定并发');
+  equal(filledBeforeSlowFinished, true, '单个慢请求不挡住已空出的并发名额');
+  equal(concurrentHost.requests.map(r => r.timeoutMs), [900,700,900,900,900,900], '批量默认超时与单项覆盖传到宿主');
+  for (const limit of [1, 8]) {
+    const pooled = scriptHost(respond); let active = 0, peak = 0;
+    pooled.fetch = async request => {
+      active++; peak = Math.max(peak, active); await sleep(5); active--;
+      return {ok:true, status:200, body:'x', url:request.url, error:''};
+    };
+    await new NativeSourceRunner(define({...base, search:{script:'search'}, js:`function search(){
+      http.all(Array.from({length:12}, (_,i) => '/item/'+i)${limit === 1 ? ', {concurrency:1}' : ''}); return []; }`}),
+      pooled, {}).search('', 1);
+    equal(peak, limit, '串行选项和默认 8 并发均生效');
+  }
+  let batchStopped = false;
+  const cancelBatchHost = scriptHost(respond);
+  cancelBatchHost.fetch = async request => {
+    cancelBatchHost.requests.push(request);
+    if (cancelBatchHost.requests.length === 3) batchStopped = true;
+    await sleep(5);
+    return {ok:true, status:200, body:'x', url:request.url, error:''};
+  };
+  await rejects(new NativeSourceRunner(concurrentSource, cancelBatchHost, {}).setCancelCheck(() => batchStopped).search('', 1),
+    /已取消/, '取消批量请求');
+  await sleep(20);
+  equal(cancelBatchHost.requests.length, 3, '取消后不再启动队列中的其他请求');
+  for (const call of ["http.all(['/x'], {concurrency:0})", "http.all(['/x'], {concurrency:9})",
+    "http.all(['/x'], {concurrency:2.5})", "http.all(['/x'], 'bad')", "http.get('/x', {timeout:'8000'})",
+    "http.get('/x', {timeout:99})", "http.post('/x', {}, {timeout:60001})", "http.all(['/x'], {timeout:null})"]) {
+    const invalidHost = scriptHost(respond);
+    await rejects(new NativeSourceRunner(define({...base, search:{script:'search'},
+      js:`function search(){ ${call}; return []; }`}), invalidHost, {}).search('', 1),
+      /必须是/, '非法并发或超时应拒绝');
+    equal(invalidHost.requests.length, 0, '非法选项不发出网络请求');
+  }
+  const singleHost = scriptHost(respond);
+  await new NativeSourceRunner(define({...base, search:{script:'search'}, js:`function search(){
+    http.get('/echo', {timeout:500}); http.post('/echo', {}, {timeout:800}); return []; }`}), singleHost, {}).search('', 1);
+  equal(singleHost.requests.map(r => r.timeoutMs), [500,800], 'GET 和 POST 单请求超时穿过脚本桥接');
+  const batchBudgetHost = scriptHost(respond);
+  await rejects(new NativeSourceRunner(define({...base, scriptLimits:{requests:2}, search:{script:'search'},
+    js:"function search(){ http.all(['/a','/b','/c'], {concurrency:1}); return []; }"}), batchBudgetHost, {}).search('', 1),
+    /请求次数超过上限/, '批量请求不能绕过总请求预算');
+  equal(batchBudgetHost.requests.length, 0, '预算不足时整批在发送前拒绝');
   const searchSource = define({
     ...base,
     js: `
