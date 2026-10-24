@@ -11,6 +11,12 @@ HarmonyOS（ArkTS）书源解析内核，从[开源轻页（qingye-reader）](ht
 
 内核不包含界面，也不访问应用数据库。搜索、发现、详情/目录/正文的调度由宿主应用实现。目前开源轻页和简听都以本仓库为书源内核。
 
+## 轻页 4.3.929 接入说明
+
+- 原生图片脚本提供 `image.reorderStrips` 横条重排；可解码的乱序图片须声明 `processPlainImages: true`，参数与限制见[书源开发文档](docs/book-source-development.md)。
+- 宿主可选择先获取完整图片标记，再调度逐张下载与处理；完整缓存和导出保留默认物化流程。图片并发、可见页优先级和取消由宿主负责。
+- 轻页新增的漫画本地 OCR、繁→简与主题包分享属于应用功能，不属于书源内核，也未增加翻译字段。接入差异见[轻页宿主文档](https://github.com/wip3l/qingye-reader/blob/main/docs/book-source-development.md)。
+
 ## 文档
 
 | 文档 | 读者 |
@@ -82,6 +88,7 @@ DEVECO_HOME="/c/Program Files/Huawei/DevEco Studio" node scripts/web-book-fetch-
 | `native-script-check` | 后台脚本：阶段返回值、请求与状态、登录和界面交互、动态选项、预算与取消 |
 | `analyze-rule-check` | 兼容书源选择器与属性提取，结果与 `scripts/fixtures/analyze-rule-golden.json` 比对，并打印取字段耗时 |
 | `source-cover-check` | 封面解密参数校验、图片嗅探与解密 |
+| `image-strip-check` | 图片条带重排 `image.reorderStrips`：余数分片、排列、行填充、尺寸与动图处理、参数校验与资源释放 |
 | `source-image-options-check` | 图片解密选项：`ivPrefixBytes` 与 `keyEncoding` 校验、图片字节脚本声明、分类菜单的 `list`/`fields` 覆盖、`book.url` 误用提示、目录首页地址优先级与 `coverHeaders` |
 | `page-candidate-url-check` | 搜索与发现地址的页码候选写法 |
 | `source-request-support-check` | 请求层：`Set-Cookie` 拆分、相对地址解析、`concurrentRate` 解析、规则变量表 |

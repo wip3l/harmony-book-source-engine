@@ -50,6 +50,8 @@ import { QuickJsDiagnostics } from '@legado/sourceengine/Diagnostics';
 
 | 端口 | 作用 | 不提供时 |
 | --- | --- | --- |
+| `imageScripts` | 运行 `content.imageDecode.script` 图片字节脚本：只拿到图片字节和受限的加解密能力，返回处理后的字节 | 内核自带的 QuickJS 执行器（一次运行 1 项，运行与等待合计最多 4 项） |
+| `nativeScripts` | 为原生书源提供 JS 执行（脚本阶段与表达式里调用的 `js` 函数） | 内核自带的 QuickJS 会话 |
 | `cookies(sourceUrl)` | 按书源返回 Cookie 存储（`SourceCookieJar`），实现按书源或按账号隔离 | 全局 `CookieStore` |
 | `persistence(source)` | 按书源读写运行时登录状态 | `BookSourceRuntimeStore.install` 安装的实现 |
 | `scripts` | 用宿主的执行器运行兼容书源阶段脚本。只有每次都在独立、有预算限制的上下文里执行时才能声明 `concurrent: true`；`forceFullScripts` 控制兼容脚本完整执行层；`allowSynchronousQuickJs: false` 禁止同步 QuickJS，也会使原生表达式中的 `js` 函数库不可用 | 兼容阶段默认隐藏 ArkWeb 串行执行；原生后台 `script` 使用 `NativeScriptSessions` |
@@ -57,6 +59,8 @@ import { QuickJsDiagnostics } from '@legado/sourceengine/Diagnostics';
 | `web` | 网页会话租约，WebView 抓取与听书音频嗅探在租约内执行 | 直接执行 |
 | `state` | 按书源记录最近一次失败原因 | 写入 AppStorage 的 `bookSourceStageLastError` |
 | `diagnostics` | 接收分段耗时（HTTP 传输与首字节、限流等待、脚本拼装等） | 不记录，也不拼接耗时明细 |
+
+`SourceEngineHost.setReaderImagesDeferred(source, true)` 不是端口，而是宿主对单个书源实例的开关：打开后正文辅助层先返回完整的图片标记，图片的下载、解密和重排由宿主按需逐张完成（见书源开发文档“图片清单与按需加载”）。它只能由宿主代码调用，不暴露给书源规则。
 
 `NativeSourceImport.importObject` / `toBookSource` 只做定义转换，不清缓存、不访问网络或数据库；应用内导入仍用 `NativeSourceService.importObject`，它会清掉该书源的缓存。原生书源的声明式缓存按“定义 + 请求头 + 登录头 + 登录信息”分开，所以只用 `NativeSourceImport` 换了定义也不会读到旧值；登录站点的 Cookie 不参与分区，网页登录与退出登录时各自清缓存。
 
