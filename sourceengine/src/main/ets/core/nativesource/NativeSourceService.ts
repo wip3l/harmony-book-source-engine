@@ -42,6 +42,7 @@ import type { NativeScriptEngine } from './NativeScriptHost';
 import { BookSourceRuntimeStore } from '../book/BookSourceRuntimeStore';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { SourceEngineHost } from '../host/SourceEngineHost';
+import { NativePureRule } from './NativePureRule';
 
 export interface NativeFilterGroup {
   title: string;
@@ -64,7 +65,7 @@ export interface NativeVarItem {
 }
 
 class NativeHost implements NativeRunnerHost {
-  parsePure?: (input: string) => Promise<string>;
+  parsePure?: (input: string) => Promise<string | null>;
   evaluateExpression?: NativeRunnerHost['evaluateExpression'];
   private nativeScripts: Pick<NativeRunnerHost, 'scriptEngine' | 'evaluateExpression'> | undefined;
   private source: BookSource;
@@ -88,10 +89,21 @@ class NativeHost implements NativeRunnerHost {
     this.evaluateExpression = this.nativeScripts?.evaluateExpression;
     const parser = SourceEngineHost.nativeParsing();
     if (parser && SourceEngineHost.readerImagesDeferred(source)) {
-      this.parsePure = async (input: string): Promise<string> => {
-        if (this.cancelled() || SourceEngineHost.isCancelled(source)) throw new Error('已取消');
-        const result = await parser(input, source);
-        if (this.cancelled() || SourceEngineHost.isCancelled(source)) throw new Error('已取消');
+      const cancelled = (): boolean => this.cancelled() || SourceEngineHost.isCancelled(source);
+      // 后台只是优化：超限或出错都交回本线程按原路径解析（规则本身的错误会在那里照常抛出），只有取消直接抛出。
+      this.parsePure = async (input: string): Promise<string | null> => {
+        if (cancelled()) throw new Error('已取消');
+        if (input.length > NativePureRule.MAX_CHARS) return null;
+        let result: string;
+        try {
+          result = await parser(input, source);
+        } catch (e) {
+          if (cancelled()) throw new Error('已取消');
+          console.warn(`[NativeSource] 后台解析失败，改在本线程解析 source=${source.bookSourceName} ` +
+            `error=${e instanceof Error ? e.message : String(e)}`);
+          return null;
+        }
+        if (cancelled()) throw new Error('已取消');
         return result;
       };
     }

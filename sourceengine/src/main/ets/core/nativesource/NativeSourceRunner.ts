@@ -7,6 +7,7 @@
 import { CooperativeScheduler } from '../concurrency/CooperativeScheduler';
 import { NativeExpr, NativeExprError, NativeScope } from './NativeExpr';
 import { SourceCoverUrl } from './SourceCoverUrl';
+import { NativePureRule } from './NativePureRule';
 import { NativeJsPrelude } from './NativeJsPrelude';
 import { NativeScriptHost, NativeScriptLimits } from './NativeScriptHost';
 import type { NativeScriptEngine } from './NativeScriptHost';
@@ -82,7 +83,8 @@ export interface NativeActionEntry {
 }
 
 export interface NativeRunnerHost extends NativeExprHost {
-  parsePure?(input: string): Promise<string>;
+  /** 后台纯解析，JSON 进出；返回 null 表示没接手（超限、后台出错），调用方回到本线程解析。 */
+  parsePure?(input: string): Promise<string | null>;
   fetch(request: NativeRequest): Promise<NativeResponse>;
   /** 调试时记录规则求值；不调试时不提供。 */
   trace?(entry: NativeRuleTrace): void;
@@ -1552,12 +1554,7 @@ export class NativeSourceRunner {
       return this.host.evaluateExpression(this.definition.js, this.definition.lib || '', text, scope.snapshot(),
         template, this.cancelled);
     }
-    // Cookie expressions retain their live source-scoped host. Script calls keep the bounded script executor.
-    if (this.host.parsePure && !this.expr.requiresScript(text, template) &&
-      !/\bcookie\s*\(|js\s*:|<js>|\{\{/i.test(text + '\n' + (this.definition.lib || ''))) {
-      return JSON.parse(await this.host.parsePure(JSON.stringify({ kind: 'expression', rule: text,
-        library: this.definition.lib || '', scope: scope.snapshot(), template })));
-    }
+    // 表达式不送后台：求值本身很快，送过去却要把整个作用域（含整页正文、登录信息）序列化一遍。
     return template ? this.expr.render(text, scope) : this.expr.evaluate(text, scope);
   }
 
@@ -1573,9 +1570,9 @@ export class NativeSourceRunner {
         const current = scope.get('item');
         const jsonItems = this.jsonRule(spec, current, true);
         const content = typeof current === 'string' ? current : NativeExpr.toText(current);
-        items = jsonItems !== null ? (jsonItems as NativeValue[]) : this.host.parsePure && !/js\s*:|<js>|\{\{/i.test(spec) ?
-          JSON.parse(await this.host.parsePure(JSON.stringify({ kind: 'items', content, rule: spec, baseUrl }))) :
-          this.host.selectItems(content, spec, baseUrl);
+        items = jsonItems !== null ? (jsonItems as NativeValue[]) :
+          (await this.parsePure<NativeValue[]>({ kind: 'items', content, rule: spec, baseUrl })) ??
+            this.host.selectItems(content, spec, baseUrl);
       }
     } catch (e) {
       throw this.fieldError(field, spec, e);
@@ -1647,10 +1644,16 @@ export class NativeSourceRunner {
     if (jsonValue !== null) return jsonValue;
     const content = typeof current === 'string' ? current : NativeExpr.toText(current);
     const baseUrl = NativeExpr.toText(scope.get('baseUrl'));
-    const found: string[] = this.host.parsePure && !/js\s*:|<js>|\{\{/i.test(text) ?
-      JSON.parse(await this.host.parsePure(JSON.stringify({ kind: 'select', content, rule: text, baseUrl, list }))) :
+    const found: string[] = (await this.parsePure<string[]>({ kind: 'select', content, rule: text, baseUrl, list })) ??
       this.host.select(content, text, baseUrl, list);
     return list ? found : (found.length > 0 ? found[0] : '');
+  }
+
+  /** 纯选择器交给宿主的后台解析；宿主没接、规则带脚本或后台没接手时返回 null，由调用方在本线程解析。 */
+  private async parsePure<T>(request: Record<string, NativeValue>): Promise<T | null> {
+    if (!this.host.parsePure || !NativePureRule.isPure(String(request.rule))) return null;
+    const output = await this.host.parsePure(JSON.stringify(request));
+    return output === null ? null : JSON.parse(output) as T;
   }
 
   /**

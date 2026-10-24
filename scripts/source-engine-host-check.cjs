@@ -118,6 +118,7 @@ async function run() {
   assert.equal(conversions,8, 'oversized result bypasses cache');
   definitions.clear(); definitions.normalize('bb'); assert.equal(conversions,9);
   const {NativePureParser} = load('core/nativesource/NativePureParser');
+  const {NativePureRule} = load('core/nativesource/NativePureRule');
   assert.throws(()=>NativePureParser.run('{}'), /synchronous QuickJS disabled/);
   const executor = {concurrent:true,forceFullScripts:true,allowSynchronousQuickJs:false,
     evaluate:async()=>{throw Error('pure parsing must not execute scripts');}};
@@ -154,8 +155,32 @@ async function run() {
   await assert.rejects(cancellable.host.parsePure('{}'),/取消/);
   await assert.rejects(cancellable.host.parsePure('{}'),/取消/);
   assert.equal(dispatched,1, 'cancellation checked before and after dispatch');
+  // Expressions and AnalyzeRule's implicit-JS forms stay on the source thread.
+  host.install({scripts:executor,cookies:()=>jar});
+  runner.host.parsePure=async input=>{offloads++; return NativePureParser.run(input);};
+  assert.equal(await runner.rawValue('=1 + 2',scope),3);
+  assert.equal(await runner.rawValue('img@src##a##result+1',scope),'legacy');
+  assert.equal(await runner.rawValue('img@src@java.trim()',scope),'legacy');
+  assert.equal(offloads,1, 'expressions and implicit-JS selectors are not offloaded');
+  assert.equal(NativePureRule.isPure('.search-result a@href'),true);
+  assert.throws(()=>parse({kind:'select',rule:'img@src##a##result+1',content:html}),/原书源上下文/);
+  // Worker failures and oversized payloads fall back to the original selector path.
+  dispatched=0;
+  host.install({nativeParsing:async()=>{dispatched++;throw Error('worker down');}});
+  const resilient=native.runner(fresh,{},()=>false);
+  assert.equal((await resilient.rawValue('img@src',scope,true)).length,178, 'worker error falls back');
+  assert.equal((await resilient.listItems('img',scope,'https://host.test')).length,178);
+  assert.equal(dispatched,2);
+  const huge=html+'x'.repeat(NativePureRule.MAX_CHARS);
+  const hugeScope=new NativeScope().set('item',huge).set('baseUrl','https://host.test');
+  assert.equal((await resilient.rawValue('img@src',hugeScope,true)).length,178, 'oversized input stays local');
+  assert.equal(dispatched,2, 'oversized input is not dispatched');
+  cancelled=false;
+  host.install({nativeParsing:async()=>{cancelled=true;throw Error('worker down');}});
+  await assert.rejects(native.runner(fresh,{},()=>cancelled).rawValue('img@src',scope,true),/取消/);
   host.install({});
   console.log('PASS pure parser: 178 images, expressions, host isolation, bounds and script routing');
+  console.log('PASS pure parser fallback: worker errors, oversized input, implicit JS and expressions stay local');
   console.log('PASS immutable definition cache: hits, LRU, bounds, errors and independent runtime objects');
   console.log('PASS shared host: default serial runtime, injected parallel runtime, cookies, persistence, cancellation');
   console.log('PASS native conversion and cache isolation across definition/account changes and actual reimport');

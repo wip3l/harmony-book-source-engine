@@ -5,6 +5,7 @@ import { NativeExpr, NativeScope, NativeValue } from './NativeExpr';
 import { NativeSourceCrypto } from './NativeSourceCrypto';
 import { digestHashHex } from '../http/DigestHash';
 import { SourceEngineHost } from '../host/SourceEngineHost';
+import { NativePureRule } from './NativePureRule';
 
 interface ParseInput {
   kind: string;
@@ -20,7 +21,7 @@ interface ParseInput {
 /** Stateless CPU work. Uses the pinned engine; never initializes AppHost, cookies, Web or persistence. */
 export class NativePureParser {
   static run(input: string): string {
-    if (input.length > 8 * 1024 * 1024) throw new Error('解析输入超过 8M UTF-16 code units');
+    if (input.length > NativePureRule.MAX_CHARS) throw new Error('解析输入超过 8M UTF-16 code units');
     // The worker host is initialized once by its owner, never replaced by a parsing task.
     if (SourceEngineHost.scriptExecutor()?.allowSynchronousQuickJs !== false) {
       throw new Error('NativePureParser requires a host with synchronous QuickJS disabled');
@@ -33,6 +34,9 @@ export class NativePureParser {
       const value = analyzer.getString(rule);
       return value ? [value] : [];
     };
+    if ((request.kind === 'items' || request.kind === 'select') && !NativePureRule.isPure(request.rule)) {
+      throw new Error('带脚本的选择器必须留在原书源上下文');
+    }
     let result: NativeValue;
     if (request.kind === 'expression') {
       const scope = new NativeScope();
@@ -53,7 +57,7 @@ export class NativePureParser {
       result = select(request.content || '', request.rule, request.baseUrl || '', request.list === true);
     } else throw new Error('未知解析任务');
     const output = JSON.stringify(result ?? null);
-    if (output.length > 8 * 1024 * 1024) throw new Error('解析结果超过 8M UTF-16 code units');
+    if (output.length > NativePureRule.MAX_CHARS) throw new Error('解析结果超过 8M UTF-16 code units');
     return output;
   }
 }

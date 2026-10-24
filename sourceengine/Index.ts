@@ -332,4 +332,5 @@ export { SourceCoverLoader } from './src/main/ets/core/nativesource/SourceCoverL
 export type { NativeCoverDecodeSpec } from './src/main/ets/core/nativesource/NativeSourceSpec';
 
 export { NativePureParser } from './src/main/ets/core/nativesource/NativePureParser';
+export { NativePureRule } from './src/main/ets/core/nativesource/NativePureRule';
 export { SourceDefinitionCache } from './src/main/ets/core/nativesource/SourceDefinitionCache';

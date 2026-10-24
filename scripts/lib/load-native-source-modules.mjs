@@ -18,6 +18,7 @@ const MODULES = [
   'core/nativesource/NativeScriptHost.ts',
   'core/nativesource/NativeSourceInteraction.ts',
   'core/nativesource/NativeSourceSpec.ts',
+  'core/nativesource/NativePureRule.ts',
   'core/nativesource/NativeSourceRunner.ts',
   'model/data/Book.ts',
   'core/nativesource/NativeSourceImport.ts',
