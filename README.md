@@ -3,7 +3,7 @@
 HarmonyOS（ArkTS）书源解析内核，从[开源轻页（qingye-reader）](https://github.com/wip3l/qingye-reader)中拆出，供其他鸿蒙阅读类应用复用。
 
 - **兼容书源**：读取阅读（Legado）格式书源，支持 CSS / XPath / JSONPath / 正则规则、Java 正则方言转换、`@js:` 与 `<js>` 脚本、登录与网页验证。
-- **原生书源**：声明式规则、表达式与 `lib` 函数库；支持顶层 `js` JavaScript 函数库，以及搜索、发现、详情、目录、正文的后台 `script` 阶段；图片可按标准算法或 `imageDecode.script` 字节脚本解密，封面支持 `coverDecode` 与 `coverHeaders`。
+- **原生书源**：声明式规则、表达式与 `lib` 函数库；支持顶层 `js` JavaScript 函数库，以及搜索、发现、详情、目录、正文的后台 `script` 阶段；图片可按标准算法或 `imageDecode.script` 字节脚本解密，封面支持 `coverDecode` 与 `coverHeaders`；正文可声明点击后才取数的内联段评、章评页面（`content.comments.page` / `chapterPage`）。
 - **请求层**：HTTP 客户端、Cookie、TLS 例外、Basic / Digest 认证、书源限流与重试。
 - **脚本运行时**：原生书源使用 QuickJS 函数库与后台会话，受控接口提供请求、状态、登录和网页交互；兼容书源保留轻量解释器、分阶段 ArkWeb 与 QuickJS 影子/灰度迁移。
 - **原生书源设置**：支持脚本登录、发送验证码、动作按钮与动态变量选项；提示、刷新发现页和网页验证由宿主接入 `NativeSourceInteraction`。
@@ -85,6 +85,7 @@ DEVECO_HOME="/c/Program Files/Huawei/DevEco Studio" node scripts/web-book-fetch-
 | --- | --- |
 | `native-source-check` | 原生书源：表达式、各阶段字段、附加请求、目录分页、媒体错误原因 |
 | `native-js-check` | JS 函数库：表达式调用、`native` 内置函数、参数返回值、定义校验与错误 |
+| `native-comment-page-check` | 原生内联评论页：点击后才取数、字段校验、冷热上下文、过期操作、回退、取消、UTF-8 上限与安全注入 |
 | `native-script-check` | 后台脚本：阶段返回值、请求与状态、登录和界面交互、动态选项、预算与取消 |
 | `analyze-rule-check` | 兼容书源选择器与属性提取，结果与 `scripts/fixtures/analyze-rule-golden.json` 比对，并打印取字段耗时 |
 | `source-cover-check` | 封面解密参数校验、图片嗅探与解密 |
