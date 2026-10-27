@@ -151,6 +151,45 @@ try {
     '请求地址模板里调用 JS 函数');
   equal(books.map((b) => [b.name, b.author]), [['斗破', 'TUDOU']], '字段规则里调用 JS 函数');
 
+  // Exercise the optional expression host: the legacy scriptLibrary-only host above skips batching.
+  // Evaluate generated expressions as real JS as well as NativeExpr, which accepts bare object lambdas.
+  for (const count of [1, 19]) {
+    for (const multipleFields of [false, true]) {
+      const items = Array.from({ length: count }, (_, index) => ({ name: `Book ${index}`, id: String(index) }));
+      const batchSource = NativeSourceSpec.fromObject({
+        sourceFormat: 'native', version: 1, name: 'Batch regression', url: 'https://example.com',
+        js: 'function label(name, index) { return name + " #" + index; } function author(index) { return "Author " + index; }',
+        search: { url: 'https://example.com/search', list: '$[*]', fields: {
+          name: '= label(item.name, index)', bookUrl: "= '/book/' + item.id",
+          author: multipleFields ? '= author(index)' : "= 'fixed author'"
+        } }
+      });
+      const expected = items.map((item, index) =>
+        [`${item.name} #${index}`, multipleFields ? `Author ${index}` : 'fixed author', `https://example.com/book/${index}`]);
+      for (const runtime of ['javascript', 'native']) {
+        const batchHost = createTestHost(JsonPathEvaluator, async () => items);
+        batchHost.scriptLibrary = (source) => vmLibrary(source);
+        let batchCalls = 0;
+        batchHost.evaluateExpression = async (source, library, expression, values, template) => {
+          equal(template, false, '批处理表达式不是模板');
+          batchCalls++;
+          if (runtime === 'javascript') {
+            const context = vm.createContext({ ...values, map: (list, callback) => list.map(callback) });
+            vm.runInContext(source, context, { timeout: 300 });
+            return vm.runInContext(`(${expression})`, context, { timeout: 300 });
+          }
+          const scope = new NativeScope();
+          for (const [name, value] of Object.entries(values)) scope.set(name, value);
+          return new NativeExpr(batchHost).loadLibrary(library).loadScript(vmLibrary(source)).evaluate(expression, scope);
+        };
+        const result = await new NativeSourceRunner(batchSource, batchHost, {}).search('Book', 1);
+        equal(result.map((book) => [book.name, book.author, book.bookUrl]), expected,
+          `${runtime} 批处理 ${count} 本、${multipleFields ? '多个' : '单个'} JS 字段保留值和全局索引`);
+        equal(batchCalls, Math.ceil(count / 16), '每批只调用一次表达式宿主，包含末尾不足 16 本的批次');
+      }
+    }
+  }
+
   const plainHost = createTestHost(JsonPathEvaluator, respond);
   let plainError = '';
   try {

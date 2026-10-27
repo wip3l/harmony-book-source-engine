@@ -1618,7 +1618,8 @@ export class NativeSourceRunner {
       while (scope.has(row) || record.indexOf(row) >= 0 || row === rows) row += '_';
       const batch = items.map((item: NativeValue, index: number): NativeValue => ({ item, index: offset + index }));
       // Nested scopes preserve the ordinary item/index semantics, including JSONPath and native callbacks.
-      const expression = `map(${rows}, ${row} => map([${row}.item], item => map([${row}.index], index => ${record})[0])[0])`;
+      // Parentheses keep the record an object expression in both NativeExpr and JavaScript hosts.
+      const expression = `map(${rows}, ${row} => map([${row}.item], item => map([${row}.index], index => (${record}))[0])[0])`;
       return (await this.expression(expression, scope.child().set(rows, batch))) as Record<string, NativeValue>[];
     } catch (error) {
       throw this.fieldError(`${prefix}.fields`, record, error);
