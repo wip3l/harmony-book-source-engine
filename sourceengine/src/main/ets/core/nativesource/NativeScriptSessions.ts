@@ -87,7 +87,7 @@ export class NativeScriptSessions implements NativeScriptEngine {
     if (result.timedOut) throw new Error(`计算时间超过 ${Math.round(options.cpuMs / 1000)} 秒（已用 ${result.cpuMs} ms）`);
     if (overtime) throw new Error(`运行超过 ${Math.round(options.wallMs / 1000)} 秒`);
     if (cancelled || result.cancelled) throw new Error('已取消');
-    throw new Error(NativeJsPrelude.shortError(result.error));
+    throw new Error(NativeJsPrelude.scriptError(result.error, NativeExpr.scriptBuiltinNames()));
   }
 
   private async acquire(): Promise<PooledSession> {
@@ -108,7 +108,7 @@ export class NativeScriptSessions implements NativeScriptEngine {
     if (!loaded.success) {
       pooled.session.release();
       throw new Error(loaded.timedOut ? `js 顶层代码运行超过 ${NativeScriptSessions.LOAD_CPU_MS / 1000} 秒` :
-        `js 载入失败：${NativeJsPrelude.shortError(loaded.error)}`);
+        `js 载入失败：${NativeJsPrelude.scriptError(loaded.error, NativeExpr.scriptBuiltinNames())}`);
     }
     return pooled;
   }

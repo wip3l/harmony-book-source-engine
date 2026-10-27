@@ -35,7 +35,11 @@ function vmLibrary(code) {
     return NativeJsPrelude.answerBuiltin(builtin, name, payload);
   };
   vm.runInContext(NativeJsPrelude.source(NativeExpr.scriptBuiltinNames()), context, { timeout: 2000 });
-  vm.runInContext(code, context, { timeout: 2000 });
+  try {
+    vm.runInContext(code, context, { timeout: 2000 });
+  } catch (e) {
+    throw new Error(`js：${NativeJsPrelude.scriptError(String(e), NativeExpr.scriptBuiltinNames())}`);
+  }
   return {
     has: (name) => NativeJsPrelude.isIdentifier(name) && vm.runInContext(NativeJsPrelude.hasSource(name), context) === true,
     call: (name, args, callBuiltin) => {
@@ -44,7 +48,7 @@ function vmLibrary(code) {
       try {
         return NativeJsPrelude.parseResult(vm.runInContext(NativeJsPrelude.callSource(name, args), context, { timeout: 300 }));
       } catch (e) {
-        throw new Error(`JS 函数 “${name}” 出错：${NativeJsPrelude.shortError(e.message)}`);
+        throw new Error(`JS 函数 “${name}” 出错：${NativeJsPrelude.scriptError(String(e), NativeExpr.scriptBuiltinNames())}`);
       } finally {
         builtin = previous;
       }
@@ -53,6 +57,25 @@ function vmLibrary(code) {
 }
 
 try {
+  // 只增强未定义的内置函数标识符；保留原错误、位置及其他错误的既有摘要。
+  const formatError = (message) => NativeJsPrelude.scriptError(message, NativeExpr.scriptBuiltinNames());
+  const hint = '；若要调用原生书源内置函数，请使用 native.split(...)';
+  for (const message of ["ReferenceError: 'split' is not defined", 'ReferenceError: split is not defined']) {
+    equal(formatError(message), message + hint, 'QuickJS 和 Node 未定义错误都带修正提示');
+  }
+  const withStack = "ReferenceError: 'split' is not defined\n    at f (js:2)\n    at <eval> (js:f:1)\n    at hidden";
+  equal(formatError(withStack), NativeJsPrelude.shortError(withStack) + hint, '保留原错误和调用位置，提示不被堆栈截断');
+  for (const message of [
+    'ReferenceError: missingValue is not defined', 'ReferenceError: map is not defined',
+    "ReferenceError: 'default' is not defined", "ReferenceError: 'split' is not initialized",
+    "ReferenceError: Cannot access 'split' before initialization", 'TypeError: split is not a function',
+    'Error: split is not defined', 'split is not defined',
+    'Error: request failed\nReferenceError: split is not defined',
+    'ReferenceError: split is not defined in response', 'InternalError: out of memory',
+    '计算时间超过 2 秒', '已取消', ''
+  ]) {
+    equal(formatError(message), NativeJsPrelude.shortError(message), `其他错误不追加 native 提示：${message}`);
+  }
   const host = createTestHost(JsonPathEvaluator, async () => null);
   const code = `
     function sign(path, salt) { return native.md5(path + salt).slice(0, 8); }
@@ -68,6 +91,14 @@ try {
     function lambdaBuiltin() { return 'map' in native; }
     function nativeAsJson() { return typeof JSON.stringify(native); }
     function badBuiltin() { return native.nope(); }
+    function bareBuiltin() { return split('a,b', ','); }
+    function dynamicBareBuiltin() { return eval("split('a,b', ',')"); }
+    function nativeSplit() { return native.split('a,b', ','); }
+    function localSplit() { const split = x => [x]; return split('local'); }
+    function paramSplit() { return (function (split) { return split('param'); })(x => [x]); }
+    function globalSplitType() { return typeof split; }
+    function methodSplit() { return 'a,b'.split(','); }
+    function caughtBareBuiltin() { try { split('a,b', ','); } catch (e) { return e.name; } }
     function addAll() { return Array.prototype.slice.call(arguments).reduce((a, b) => a + b, 0); }
     function decode(cipher) { return native.fromBytes(native.decrypt('AES/CBC/PKCS5Padding', native.base64Bytes(cipher), '0123456789abcdef', 'fedcba9876543210')); }
   `;
@@ -92,6 +123,17 @@ try {
   equal(ev('decode(cipher)'), '正文', 'JS 里用 native 解密');
   throws(() => ev('boom()'), /boom.*坏了/, 'JS 抛出的错误带函数名和原因');
   throws(() => ev('badBuiltin()'), /badBuiltin.*native\.nope 不是可用的内置函数/, 'native 上没有的名字说明是哪个');
+  throws(() => ev('bareBuiltin()'), /bareBuiltin.*ReferenceError: split is not defined.*native\.split/, '裸调用提示 native 写法');
+  throws(() => ev('dynamicBareBuiltin()'), /ReferenceError: split is not defined.*native\.split/, 'eval 中的裸调用也有提示');
+  equal(ev('nativeSplit()'), ['a', 'b'], 'native.split 正常调用');
+  equal(ev('methodSplit()'), ['a', 'b'], '字符串自带方法保持原样');
+  equal(ev('localSplit()'), ['local'], '局部同名变量不受影响');
+  equal(ev('paramSplit()'), ['param'], '同名参数不受影响');
+  equal(ev('globalSplitType()'), 'undefined', '不向全局注入内置函数桩');
+  equal(ev('caughtBareBuiltin()'), 'ReferenceError', '脚本内部捕获到的异常类型不变');
+  equal(vmLibrary('function ok() {}').has('split'), false, '函数存在性检查不误认内置函数');
+  throws(() => vmLibrary("split('a,b', ',');"), /^js：ReferenceError: split is not defined.*native\.split/,
+    '顶层代码载入失败也提供提示');
   throws(() => ev('missingFn()'), /没有名为 “missingFn” 的内置函数/, 'JS 里也没有的函数');
   throws(() => new NativeExpr(host).loadScript(null).evaluate('twice(1)', scope), /没有名为/, '没有 js 时照旧报错');
 

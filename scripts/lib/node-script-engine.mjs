@@ -25,9 +25,9 @@ try {
   const result = vm.runInContext(workerData.call, context, { filename: 'script' });
   Promise.resolve(result).then(
     (value) => parentPort.postMessage({ type: 'done', value: value }),
-    (error) => parentPort.postMessage({ type: 'error', message: String(error && error.message || error) }));
+    (error) => parentPort.postMessage({ type: 'error', message: String(error) }));
 } catch (error) {
-  parentPort.postMessage({ type: 'error', message: String(error && error.message || error) });
+  parentPort.postMessage({ type: 'error', message: String(error) });
 }
 `;
 
@@ -90,7 +90,7 @@ export function createNodeScriptEngine(NativeJsPrelude, builtinNames, code) {
               }
             });
           } else if (message.type === 'error') {
-            finish(() => reject(new Error(NativeJsPrelude.shortError(message.message))));
+            finish(() => reject(new Error(NativeJsPrelude.scriptError(message.message, builtinNames))));
           }
         });
         worker.on('error', (error) => finish(() => reject(error)));

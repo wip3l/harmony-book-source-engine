@@ -600,6 +600,28 @@ try {
   equal(NativeSourceRunner.resolveVars(numeric,{}).limit,'2','numeric default normalized to text');
   }
 
+  // 后台脚本的载入、同步执行与 Promise 拒绝统一提示；不改变 JS 绑定或异常类型。
+  for (const js of [
+    "split('a,b', ','); function search() { return []; }",
+    "function search() { return split('a,b', ','); }",
+    "async function search() { await Promise.resolve(); return split('a,b', ','); }",
+    "function search() { return eval(\"split('a,b', ',')\"); }"
+  ]) {
+    const source = define({ ...base, js, search: { script: 'search' } });
+    await rejects(new NativeSourceRunner(source, scriptHost(respond), {}).search('a', 1),
+      /搜索脚本 search：.*ReferenceError: split is not defined.*native\.split/, '后台脚本未定义内置名提供修正提示');
+  }
+  const bindingsSource = define({ ...base, search: { script: 'search' }, js: `function search() {
+    function local(split) { return split('local'); }
+    var caught = '';
+    try { split('a,b', ','); } catch (e) { caught = e.name; }
+    return [{ name: JSON.stringify([native.split('a,b', ','), 'a,b'.split(','),
+      local(x => [x]), typeof split, caught, typeof uuid(), typeof log, typeof vars.set]), bookUrl: '/book' }];
+  }` });
+  equal(JSON.parse((await new NativeSourceRunner(bindingsSource, scriptHost(respond), {}).search('a', 1))[0].name),
+    [['a', 'b'], ['a', 'b'], ['local'], 'undefined', 'ReferenceError', 'string', 'function', 'function'],
+    '后台脚本的 native、方法、局部绑定、全局探测、捕获异常和宿主 API 保持原样');
+
   console.log(`Native script stage check passed: ${assertions} assertions.`);
 } finally {
   mods.cleanup();

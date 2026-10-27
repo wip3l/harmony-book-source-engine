@@ -1293,6 +1293,7 @@ fn sign(path, ts) {
 
 - 引擎是 QuickJS，支持较新的语法：`class`（含私有字段）、箭头函数、解构、正则命名分组、`replaceAll`、`BigInt` 等。
 - JS 里通过 `native.名称(…)` 使用内置函数，例如 `native.md5(text)`、`native.sel('@css:.title@text', html)`、`native.decrypt(…)`。除 `map`、`flatMap`、`filter`、`find` 外的内置函数都能用；这四个请改用数组自带的方法。`native.sel`、`native.selAll` 不传内容时，取发起调用的那条规则当前的 `item`。写错名字时报“native.xxx 不是可用的内置函数”。
+- 若在 JS 中写 `function parts(text) { return split(text, ','); }`，应改为 `function parts(text) { return native.split(text, ','); }`。裸用内置函数名触发未定义错误时，顶层代码载入、表达式调用和阶段脚本执行都会保留原错误及位置摘要，并提示“若要调用原生书源内置函数，请使用 native.split(...)”。导入检查不会静态分析未执行的函数体；函数中的错误仍需执行到该处才会暴露。字符串方法 `text.split(',')`、自己定义的局部变量和参数不受影响；`uuid()`、阶段脚本的 `log(...)` 等宿主 API 仍按各自文档使用。
 - `uuid()` 返回随机 UUID，在 `js` 函数里可以直接调用（表达式本身没有 `uuid`，需要时写一个 `js` 函数返回它）。
 - 参数和返回值按 JSON 传递：字符串、数字、布尔、`null`、数组、对象都可以；字节数据和内置函数一样用 0 到 255 的数字列表。`undefined` 会变成 `null`，函数和 `BigInt` 传不出来。
 - 查找顺序是 `lib` 函数、内置函数、`js` 函数。导入时会检查重名：`js` 里的函数不能与内置函数或 `lib` 函数同名。`lib` 函数里也可以调用 `js` 函数。

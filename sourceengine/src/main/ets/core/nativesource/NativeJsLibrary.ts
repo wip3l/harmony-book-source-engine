@@ -101,7 +101,8 @@ export class NativeJsLibrary implements NativeScriptLibrary {
       if (result.timedOut) {
         throw new NativeExprError(`JS 函数 “${name}” 运行超过 ${NativeJsLibrary.CALL_TIMEOUT_MS} ms`);
       }
-      throw new NativeExprError(`JS 函数 “${name}” 出错：${NativeJsPrelude.shortError(result.error)}`);
+      throw new NativeExprError(`JS 函数 “${name}” 出错：${NativeJsPrelude.scriptError(result.error,
+        NativeExpr.scriptBuiltinNames())}`);
     }
     try {
       return NativeJsPrelude.parseResult(result.value);
@@ -149,7 +150,7 @@ export class NativeJsLibrary implements NativeScriptLibrary {
       const loaded = context.evaluateBounded(code, 'js', NativeJsLibrary.LOAD_TIMEOUT_MS, 8);
       if (!loaded.success) {
         error = loaded.timedOut ? `js 顶层代码运行超过 ${NativeJsLibrary.LOAD_TIMEOUT_MS} ms` :
-          `js：${NativeJsPrelude.shortError(loaded.error)}`;
+          `js：${NativeJsPrelude.scriptError(loaded.error, NativeExpr.scriptBuiltinNames())}`;
       }
     }
     if (error) {
