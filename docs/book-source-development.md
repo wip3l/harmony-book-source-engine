@@ -1,18 +1,18 @@
 # 公共书源规则开发文档
 
-本文是 `harmony-book-source-engine` 的书源格式和规则语义参考，由轻页与简听共同使用；字段、表达式、选择器和规则示例只在本仓库维护。两端各自固定一个引擎提交，升级子模块后才获得新增能力。
+本文是 `harmony-book-source-engine` 的书源格式和规则语义参考，供接入该引擎的宿主应用使用；字段、表达式、选择器和规则示例只在本仓库维护。各宿主可固定不同的引擎提交，升级依赖并完成接入后才获得新增能力。
 
 ## 适用范围与宿主差异
 
 | 内容 | 维护位置与适用范围 |
 | --- | --- |
-| JSON 格式、表达式、选择器、阶段规则 | 本文，共用同一份定义，不为轻页或简听另建规则方言 |
+| JSON 格式、表达式、选择器、阶段规则 | 本文，各宿主共用同一份规则定义 |
 | 公共引擎代码路径 | 相对本仓库根目录，如 `sourceengine/src/main/ets` |
-| 页面入口、编辑器、调试页和宿主辅助代码 | 正文里的操作说明以轻页为参考；`entry/` 路径属于轻页宿主，不属于公共 HAR |
-| 简听的导入限制、安全预算、UI 和缓存 | [简听宿主说明](https://github.com/end-web/HarmonyOS-book/blob/main/docs/BOOK_SOURCE_RULES.md) |
+| 页面入口、编辑器、调试页和宿主辅助代码 | 正文里的操作说明以参考宿主的实现为例；`entry/` 路径属于宿主应用，不属于公共 HAR |
+| 各宿主的导入限制、安全预算、UI 和缓存 | 由对应宿主的接入文档说明，不作为公共引擎的统一保证 |
 | 封面解密 | 本文 `coverDecode` 字段；宿主还需接入 [SourceCoverLoader](cover-decoding.md)，不能仅靠更新文档或 JSON 获得显示能力 |
 
-本文对应轻页 4.4.935 发布构建；此前代码与设备核对记录为 2026-10-26 的本地开发构建，本次文档更新不表示重新执行真机验收。下述新增能力以包含本轮引擎及宿主改动的构建为准，不代表此前发布的所有同版本安装包都已具备。文中的界面、视频播放和调试说明以轻页为准，不代表所有宿主都已实现。简听与轻页（4.0.921 起）都已接入封面解密。
+本文对应参考宿主 4.4.935 发布构建；此前代码与设备核对记录为 2026-10-26 的本地开发构建，本次文档更新不表示重新执行真机验收。下述新增能力以包含本轮引擎及宿主改动的构建为准，不代表此前发布的所有同版本安装包都已具备。文中的界面、视频播放和调试说明以参考宿主为准，不代表所有宿主都已实现。参考宿主自 4.0.921 起已接入封面解密；其他宿主需确认各自的接入情况。
 
 > 示例只使用 `example.com`、本地测试服务和虚构数据，不发布实际站点书源或登录凭据。
 
@@ -25,7 +25,7 @@
 | 条件重试 | `retry` 支持状态码、固定/指数退避与 Retry-After 策略对象 | 数字形式保留；对象策略仅重放无请求体的 GET/HEAD，并受总预算约束 |
 | 静态变量 | `vars[].options/default` 明确接受字符串与有限数字 | 运行时按文本使用；动态 `optionsScript` 仍返回字符串数组 |
 | 漫画媒体头 | 允许合法自定义头，并按 origin 处理跳转、按请求头隔离缓存 | 需要 API 22+ 且拦截可用；音频播放器内部跳转不属于这套图片处理逻辑 |
-| 轻页诊断 | 请求轨迹、脚本计算/总耗时、报告前置摘要、可选 3000 章目录检查 | 默认取样仍为 32 章；章节数、脚本计算与完整目录阶段耗时分别查看 |
+| 参考宿主诊断 | 请求轨迹、脚本计算/总耗时、报告前置摘要、可选 3000 章目录检查 | 默认取样仍为 32 章；章节数、脚本计算与完整目录阶段耗时分别查看 |
 
 WebView 加载、`browser.render`、默认 User-Agent、按钮上下文和详情 `keep` 都是已有能力，本轮补充使用说明和验证边界。默认脚本计算预算仍为 2 秒，没有扩大到 5 秒，也没有增加通用的挑战页自动回退。
 
@@ -36,7 +36,7 @@ WebView 加载、`browser.render`、默认 User-Agent、按钮上下文和详情
 | | 原生书源 | 兼容书源 |
 | --- | --- | --- |
 | 状态 | **推荐**，新书源请用这种格式 | **已过时**，仅为存量书源保留 |
-| 来历 | 开源轻页自己定义 | Android「阅读」（Legado）的书源格式 |
+| 来历 | 本引擎定义 | Android「阅读」（Legado）的书源格式 |
 | 规则语言 | 声明式规则、自定表达式语言与函数库（`lib`，或用 JavaScript 写的 `js`） | 选择器规则加 JavaScript |
 | 执行方式 | 规则由 ArkTS 执行；`js` 在 QuickJS 运行（表达式调用在主线程，`script` 在后台线程）；显式网页抓取另用 ArkWeb | 轻量解释器、ArkWeb、QuickJS 分层执行 |
 | 识别方式 | JSON 里带 `"sourceFormat": "native"` | 其余情况 |
@@ -58,13 +58,13 @@ WebView 加载、`browser.render`、默认 User-Agent、按钮上下文和详情
 
 # 第一部分：原生书源
 
-原生书源是开源轻页自己定义的书源格式。一条原生书源是一个 JSON 对象：顶层声明名称、地址、变量、登录等，`search`、`explore`、`detail`、`toc`、`content` 五个阶段各自声明“请求什么地址、从响应里取哪些字段”。
+原生书源是本引擎定义的书源格式。一条原生书源是一个 JSON 对象：顶层声明名称、地址、变量、登录等，`search`、`explore`、`detail`、`toc`、`content` 五个阶段各自声明“请求什么地址、从响应里取哪些字段”。
 
 大多数站点只用声明式规则就够了：地址和字段用模板、选择器或表达式写，条件判断、拼接、查表用表达式写。签名、解密这类算法写进函数库 `lib`，或者把现成的 JavaScript 放进 `js`。请求顺序要由代码决定时（先取令牌再搜索、按结果循环翻页、多步登录），把整个阶段交给 `js` 里的函数，即[脚本阶段](#脚本阶段-script)。原生书源不经过兼容书源的轻量解释器或 ArkWeb 阶段运行时；只有显式的 `webView` / `browser.render` 网页抓取需要 ArkWeb。
 
 ## 在应用里的位置
 
-以下以轻页为准，入口在「我的 → 书源管理」。
+以下以参考宿主为准，入口在「我的 → 书源管理」。
 
 | 操作 | 入口与说明 |
 | --- | --- |
@@ -97,11 +97,11 @@ WebView 加载、`browser.render`、默认 User-Agent、按钮上下文和详情
 | `text` | 小说等文字内容 | 阅读器 | `content.text` |
 | `audio` | 有声书 | 听书页（详情页的「开始听书」直接进入） | `content.audio` |
 | `comic` | 漫画（也可写 `image`） | 阅读器的漫画形态 | `content.images` |
-| `video` | 短剧等视频 | 应用自带的播放页 | `content.video` |
+| `video` | 短剧等视频 | 应用自带的播放页，可回退原站网页 | `content.video`；可选 `content.videoPage`，也支持仅提供网页 |
 
-正文阶段按书籍类型选规则；对应规则没写时依次退回 `text`、`images`、`audio`、`video` 里写了的第一个。
+正文阶段按书籍类型选规则；视频类型配置了 `video` 或 `videoPage` 时进入视频分支。其他情况下，对应规则没写时依次退回 `text`、`images`、`audio`、`video` 里写了的第一个。
 
-视频类型没有阅读形态：详情页显示为「剧集详情 / 选集 / 开始观看」，点「开始观看」或从书架打开都直接进入播放页。播放页全屏播放，可在页内选集、上一集和下一集、连播、调倍速、拖动进度，并记住看到第几集第几秒。
+视频类型没有阅读形态：详情页显示为「剧集详情 / 选集 / 开始观看」，点「开始观看」或从书架打开都直接进入播放页。原生播放支持全屏、选集、上一集和下一集、连播、倍速、拖动进度，并记住看到第几集第几秒。配置 `videoPage` 后可按错误类型回退网页；网页播放的进度、倍速与连播由网站控制，见[视频网页回退](#视频网页回退)。
 
 同一个站点的有声版和小说版不要共用同一个书籍地址：书籍按地址识别，类型以最后一次详情结果为准。
 
@@ -290,7 +290,7 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 ### 选择器取到多个结果时
 
 - 文本字段把各项按行连起来（多段简介、多段正文）。
-- 地址字段（`bookUrl`、`tocUrl`、`coverUrl`，目录的 `url`，正文的 `audio`、`video`）只取第一个，并按响应地址补全为绝对地址。
+- 地址字段（`bookUrl`、`tocUrl`、`coverUrl`，目录的 `url`，正文的 `audio`、`video`、视频专用结果的 `videoPage`）只取第一个，并按响应地址补全为绝对地址。
 - 只想要其中一项的文本时，用索引简写，或写成表达式 `= first(selAll('…'))`。
 
 ## 表达式语言
@@ -723,7 +723,7 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 
 ### 正文 `content`
 
-按书籍类型取对应的规则：听书取 `audio`，漫画取 `images`，视频取 `video`，其余取 `text`。不写 `url` 时请求章节的 `url`。
+按书籍类型取对应的规则：听书取 `audio`，漫画取 `images`，视频取 `video` 并在视频专用接口中解析可选的 `videoPage`，其余取 `text`。不写 `url` 时请求章节的 `url`；即使只配置网页回退字段，也会先执行正文阶段的请求或脚本。
 
 | 字段 | 说明 |
 |---|---|
@@ -731,6 +731,7 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 | `images` | 图片地址列表（漫画）。也可以是 `data:image/…;base64,…` 内嵌图片，应用会解码后存成缓存文件，`imageDecode` 同样作用于它 |
 | `audio` | 音频地址（听书） |
 | `video` | 这一集的视频流地址（如 mp4、m3u8），由应用自带的播放页播放。每次切集都会重新请求，地址带时效也没关系 |
+| `videoPage` | 可选。当前集的原站网页播放地址，支持与 `video` 相同的规则语法及相对地址补全。用于视频专用接口的网页回退；不从章节地址、直链或 `links` 猜测。仅接受 HTTP/HTTPS |
 | `mediaError` | 可选。`audio` / `video` 求值为空时显示给用户的原因，可以读取附加请求的结果（例如「这本书没有真人录音版」）。不写或求值为空时，应用从附加请求和主请求里第一个 `code` 不为 0 的响应归纳原因（如「音频接口返回失败：ILLEGAL_ACCESS（code=110）」） |
 | `mediaHeaders` | 漫画图片和音频的请求头，例如 `{ "Referer": "{{server}}/" }`；漫画还支持合法自定义头，要求和重定向规则见[媒体请求头与重定向](#媒体请求头与重定向)。不作用于正文文字里的插图和视频；封面使用 `coverHeaders` |
 | `replace` | 净化规则列表：`{ "pattern": "正则", "with": "替换文本", "flags": "g" }`。按顺序作用于 `text`；`with` 不写时删除匹配内容，`flags` 默认 `g` |
@@ -740,6 +741,83 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 | `imageDecode` | 漫画图片解密，见下 |
 | `links` | 正文末尾的按钮，见下 |
 | `comments` | 段评与章末评论入口，见下 |
+
+#### 视频网页回退
+
+本节描述包含网页回退实现的参考宿主开发构建，不表示此前发布的同版本安装包或其他宿主已支持。书源格式仍为 `version: 1`。网页回退已通过自动化检查及应用构建，MateBook Fold 已完成安装启动检查；真实不支持格式的视频、网站登录及网页全屏仍需使用实际书源验收。
+
+`video` 提供媒体直链，`videoPage` 提供**当前这一集的原站播放网页**。不要把 JSON 接口、视频直链或第三方解析站地址当作网页回退地址。应用不会从 `chapter.url`、`video` 或 `content.links` 自动推测网页。
+
+以下示例假设章节接口返回 `{ "streamUrl": "https://cdn.example.com/1.mp4", "webUrl": "/watch/1" }`：
+
+```json
+{
+  "type": "video",
+  "content": {
+    "video": "$.streamUrl",
+    "videoPage": "$.webUrl",
+    "mediaError": "= '没有取得直链，可尝试网页播放'"
+  }
+}
+```
+
+这是书源定义片段，需与搜索、详情和目录配置合并。相对网页地址按正文阶段响应地址补全，只接受 HTTP/HTTPS，不接受 `javascript:`、`file:`、`data:` 等协议或内嵌用户名密码的地址。
+
+`videoPage` 是**字段规则**，写法与 `video` 一致：
+
+| 地址来源 | 配置示例 |
+| --- | --- |
+| 接口字段 | `"videoPage": "$.webUrl"` |
+| 拼接章节信息 | `"videoPage": "{{server}}/watch?episode={{chapter.index + 1}}"` |
+| 固定网页地址 | `"videoPage": "= 'https://example.com/watch/1'"` |
+
+固定字符串要写成表达式；不含 `{{…}}`、也不以 `=` 开头的字符串会按选择器处理。不要直接写 `"videoPage": "https://example.com/watch/1"`。
+
+只提供网页时，仍设置 `type: "video"`，正文可写为：
+
+```json
+{
+  "type": "video",
+  "content": {
+    "videoPage": "$.webUrl",
+    "mediaError": "= '本集请使用网页播放'"
+  }
+}
+```
+
+使用后台脚本时，`content.script` 指定函数名，并且不配置显式的 `text`、`images`、`audio`、`video` 规则，就会按返回对象的同名键取值。例如 `"content": { "script": "videoContent" }` 对应的顶层 `js` 函数为：
+
+```javascript
+function videoContent(ctx) {
+  var response = http.get(ctx.chapter.url);
+  if (!response.ok) throw new Error('获取剧集信息失败');
+  var data = response.json();
+  return { video: data.streamUrl || '', videoPage: data.webUrl || '' };
+}
+```
+
+若已配置显式 `video` 规则，网页也需显式配置，例如 `"videoPage": "$.videoPage"`；仅在脚本返回对象中增加该键不会自动启用这条字段映射。
+
+参考宿主的处理方式如下：
+
+| 情况 | 播放页行为 |
+| --- | --- |
+| 有可用视频直链 | 优先原生播放 |
+| 前台播放器上报“不支持规格” `5400106`，且有网页地址 | 自动切换网页，显示切换提示 |
+| 网络或未知播放错误 | 重新获取直链一次；仍失败时提供「重试」，有网页地址时另提供「网页播放」 |
+| 无权限 `5411005` | 提示检查登录状态或书源权限，不自动重试；有网页地址时可手动打开 |
+| 直链为空或直链规则抛错，但取得有效网页地址 | 保留错误原因，提供手动「网页播放」入口 |
+| 没有有效网页地址 | 显示原生或解析错误及重试入口，不自动打开章节接口 |
+
+可选网页规则异常不阻断有效直链；主请求或脚本整体执行失败、无法取得网页地址时仍显示解析错误。获取播放地址最多等待 30 秒。同一集自动重试解析失败时，保留此前取得的网页地址供手动打开；切换到其他集后清除旧集网页地址。每次原生播放尝试最多自动切换一次网页，网页失败后不会自动切回原生形成循环。
+
+网页回退由视频专用接口 `NativeSourceService.getVideoContent()` 提供。通用正文接口 `getContent()` 不启用网页回退，空直链仍沿用原有失败语义。因此，只配置 `videoPage` 的书源在通用正文调试中可能提示没有视频地址，应从剧集详情的「开始观看」进入实际播放页验收。
+
+网页模式使用网站自己的播放控件，支持返回、选集、上一集、下一集、刷新网页和重试原生。网页全屏时先退出全屏，再处理网页历史与离开页面。网站内的跳转与选集不回写应用目录；不回传网页播放秒数或结束事件，也不执行应用内连播。应用保存进入网页前的原生进度；从应用选集栏切集后，重新解析新一集并优先尝试原生播放。后台暂停网页媒体，返回前台后由用户继续播放；网站首次播放也可能需要点击其播放按钮。
+
+网页使用 ArkWeb 对应域的 Cookie，不把 `mediaHeaders`、书源变量或登录桥接注入网页，也不自动拉起外部客户端。视频专用结果保留媒体头供宿主使用，当前参考宿主 `Video` 组件仍不发送这些头；网页由网站自行发起媒体请求。网页能否播放仍取决于网站、登录状态及设备媒体能力，回退不等于转码或增加系统解码格式。
+
+书源验收建议覆盖：正常直链、不支持规格、地址过期、直链为空但网页可用、网页地址为空或非法，以及登录、快速切集、全屏返回和后台暂停。实际媒体兼容性不能仅用调试页解析成功或 Node 回归代替。
 
 #### 媒体请求头与重定向
 
@@ -766,7 +844,7 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 
 请求头参与漫画图片缓存身份，改变授权头会使用不同缓存。若跨 origin 图片服务也要求令牌，应由书源明确提供合法的目标地址与对应请求参数，不能依赖跳转将原站凭据带过去。
 
-音频显式请求头沿用播放器传入方式，播放器内部重定向不受上述图片策略控制。这里只说明漫画下载链路，不把其结论扩展到封面、正文插图、视频或所有宿主。轻页 API 26 已用受控 HTTP 服务验证同 origin / 跨 origin 302；其他系统和传输组合仍需对应设备验证。
+音频显式请求头沿用播放器传入方式，播放器内部重定向不受上述图片策略控制。这里只说明漫画下载链路，不把其结论扩展到封面、正文插图、视频或所有宿主。参考宿主 API 26 已用受控 HTTP 服务验证同 origin / 跨 origin 302；其他系统和传输组合仍需对应设备验证。
 
 **正文分页 `nextUrl`** 与目录的写法相同：
 
@@ -779,7 +857,7 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 
 - **签名与加密**：原生规则已有 `hmac(算法, 密钥, 数据)`，需要十六进制签名时可写 `bytesHex(hmac('SHA256', secret, message))`；图片脚本也有 `image.hmac`。无需依赖兼容接口名称 `Convert.hmacString`。HMAC、RSA、GBK 分别属于消息认证、非对称密码和字符编码，不能视为同一种“国密”能力。
 - **图片变换**：`image.reorderStrips` 已支持受限的分片重排；它不是通用 Canvas 或 RGBA 接口。目前没有 `image.blur/crop`，不要在书源中假定存在。纯 JS 解码大图片可能超过图片脚本 CPU 预算。
-- **内嵌图片**：轻页的正文图片管线可将 `data:image/…;base64,…` 解码并写入缓存，解码字节上限 20 MiB，并可继续执行 `imageDecode`。空数据、无效 Base64、超限会给出具体错误。宿主仍需支持该图片格式；旧版失败样本应在目标版本复测，不能把 1×1 图片成功当成全部格式可用的证明。
+- **内嵌图片**：参考宿主的正文图片管线可将 `data:image/…;base64,…` 解码并写入缓存，解码字节上限 20 MiB，并可继续执行 `imageDecode`。空数据、无效 Base64、超限会给出具体错误。宿主仍需支持该图片格式；旧版失败样本应在目标版本复测，不能把 1×1 图片成功当成全部格式可用的证明。
 - **超时**：底层请求本来就有连接／读取超时；脚本显式 `timeout` 提供的是可配置的单项总预算。`http.all` 并发、图片下载并发和站点限流是不同限制，调高一个不会取消其他限制。
 - **AMP 列表不翻页**：如果 HTML 加上 `page=2/3` 仍返回相同条目，检查页面中的 `amp-list src`；实际分页可能来自它指向的 JSON API，而非 HTML 地址。先核对响应结构及 next/bookmark 字段，再编写 `explore` 请求，不要假定 API 页码没有上限。
 - **重定向到别章**：`http.*` 的 `finalUrl` 是可观测时的最终地址，拿不到时为空；不要把 `url` 当成最终地址，也不要仅凭 HTTP 200 判定章节正确。缺少 finalUrl 时，可结合站点提供的章节标识或 canonical 校验，但 canonical 本身是页面声明，不能替代网络层的最终地址。
@@ -904,7 +982,7 @@ function restoreImage(bytes, ctx) {
 
 支持按需显示的阅读宿主可对本次源实例调用 `SourceEngineHost.setReaderImagesDeferred(source, true)`，使公共正文辅助层先返回完整 ReaderImageMarker。宿主须在后续图片请求中保留请求头、`decode`、`params`、`imageIndex` 和尺寸，并使用原有图片管线物化；每张完成后即可显示。这个策略仅由可信宿主设置，源对象复制时继承，不属于 JSON 字段，不向规则脚本开放。未开启时仍按默认流程完整物化图片；下载、导出等需要完整本地内容的调用应保留默认策略。
 
-轻页 4.3.929 的漫画阅读已采用逐张显示：全局最多 4 个图片处理名额，可见图片优先；前台繁忙时后台最多占 1 个名额，空闲时最多 2 个。手动缓存仍等待完整结果。其他宿主的调度策略可能不同。漫画 OCR 与繁→简是轻页对图片的本地显示处理，不改变本节字段，也不属于 `imageDecode.script` 的职责；日／英／韩翻译尚未接入。
+参考宿主 4.3.929 的漫画阅读已采用逐张显示：全局最多 4 个图片处理名额，可见图片优先；前台繁忙时后台最多占 1 个名额，空闲时最多 2 个。手动缓存仍等待完整结果。其他宿主的调度策略可能不同。漫画 OCR 与繁→简是参考宿主对图片的本地显示处理，不改变本节字段，也不属于 `imageDecode.script` 的职责；日／英／韩翻译尚未接入。
 
 更新电脑上的 JSON 不会自动替换 App 已导入的定义。修改脚本或解码配置后，应覆盖导入同一书源、确认图片模式并刷新章节；仅修改宿主并发上限不需要重新导入。
 
@@ -1001,7 +1079,7 @@ function restoreImage(bytes, ctx) {
 
 格式版本仍为 1，**不代表所有版本 1 宿主都支持内联页面**。为了兼容旧宿主，必须保留可用的 `paragraphUrl/chapterUrl`；只提供 `page/chapterPage` 的书源可能被旧宿主拒绝导入。不要把格式版本改成 2 来检测这个能力。
 
-轻页的书源调试页会列出内联入口，点击“预览”才执行页面请求，显示 HTML/data 字节数与执行结果，并用同一隔离组件预览。[离线示例书源](examples/native-inline-comments.json) 不请求站点，可验证两段气泡、章末入口、数据注入与本地按钮；这是仅供支持内联页面的宿主使用的 page-only 示例。
+参考宿主的书源调试页会列出内联入口，点击“预览”才执行页面请求，显示 HTML/data 字节数与执行结果，并用同一隔离组件预览。[离线示例书源](examples/native-inline-comments.json) 不请求站点，可验证两段气泡、章末入口、数据注入与本地按钮；这是仅供支持内联页面的宿主使用的 page-only 示例。
 
 ## 原生书源的顶层字段
 
@@ -1325,7 +1403,7 @@ fn sign(path, ts) {
 | 数组或对象 | 已解析的 JSON（`data`），JSONPath 照常可用 |
 | `page(原文, 地址)` | 原文加上它的地址，相对链接按这个地址补全 |
 
-为了少写样板：脚本阶段不写 `list` 时，返回数组的每一项就是一条结果；不写 `fields` 时按同名键取值（书籍取 `name`、`author`、`kind`、`intro`、`coverUrl`、`wordCount`、`lastChapter`、`updateTime`、`status`、`bookUrl`、`tocUrl`、`type`，章节取 `title`、`url`、`isVip`、`isPay`、`isVolume`、`tag`）。写了 `fields` 就要写全必填字段。正文不写 `text`、`images`、`audio`、`video` 时，返回字符串就是正文，返回对象时按书籍类型取同名键。
+为了少写样板：脚本阶段不写 `list` 时，返回数组的每一项就是一条结果；不写 `fields` 时按同名键取值（书籍取 `name`、`author`、`kind`、`intro`、`coverUrl`、`wordCount`、`lastChapter`、`updateTime`、`status`、`bookUrl`、`tocUrl`、`type`，章节取 `title`、`url`、`isVip`、`isPay`、`isVolume`、`tag`）。写了 `fields` 就要写全必填字段。正文不写 `text`、`images`、`audio`、`video` 时，返回字符串就是正文，返回对象时按书籍类型取同名键；视频专用接口还读取返回对象的 `videoPage`，详见[视频网页回退](#视频网页回退)。
 
 - 可以写 `script` 的阶段：`search`、`explore`、`detail`、`toc`、`content`。写了 `script` 的阶段不用写 `url`；`toc` 和 `content` 的翻页由脚本自己处理，**不再跟随 `nextUrl`**。
 - 发现页的分类用 `menus` 声明（没有 `url` 的仍是分组标题），要在脚本里算出分类就用 [`dynamicMenus.script`](#发现-explore)。发现阶段写了 `script` 时，分类的 `url` 可以写任意标识，函数从 `ctx.url` 读到，`ctx.title` 是分类名，动态分类的条目在 `ctx.menu`。
@@ -1339,7 +1417,7 @@ fn sign(path, ts) {
 | `http.get(地址, 选项?)`、`http.post(地址, 请求体, 选项?)`、`http.request({ url, method, headers, body, charset, retry, webView, timeout })` | 同步发请求，返回 `{ ok, status, body, url, finalUrl, error, headers, headersAvailable, requestId }`，`json()` 解析正文（不是 JSON 时抛错）。相对地址按书源地址补全，也接受 `data:` 地址；请求体是对象时按 JSON 发送并自动加 `Content-Type: application/json`。请求失败不抛错，看 `ok` 和 `status`。`headers` 键名为小写，同名多值用逗号加空格连接，`set-cookie` 多行用换行连接；`headersAvailable` 为 false 时表示未取得响应头（例如 WebView DOM、网络失败），不能据空对象断言服务器没有该头。4xx/5xx 也保留可观测响应头。Cookie 继续自动保存 |
 | `http.all([请求, …], { concurrency, timeout, failOnPartial }?)` | 按顺序返回。每项可以是地址或请求对象；默认最多 8 个并发，`concurrency` 可设 1–8 的整数，完成一项就补下一项。`timeout` 为每项的默认超时，可由请求对象中的同名字段覆盖。默认返回全部逐项结果；`failOnPartial: true` 在整批完成且任一项失败时抛错，报告成功数、失败数和从 0 开始的失败索引。取消/超预算仍立即报错 |
 | `vars.get(名)`、`vars.set(名, 值)` | 书源变量，写入后保存（和书源设置页是同一份），可以写没有在 `vars` 里声明的键 |
-| `temp.get(名)`、`temp.set(名, 值)` | 当前 `NativeSourceRunner` 实例内的临时值；轻页按操作创建运行器，不能依赖它把详情数据传给后续目录操作 |
+| `temp.get(名)`、`temp.set(名, 值)` | 当前 `NativeSourceRunner` 实例内的临时值；参考宿主按操作创建运行器，不能依赖它把详情数据传给后续目录操作 |
 | `cache.get(名)`、`cache.put(名, 值, 有效秒数?)` | 内存缓存，按书源分开，有效期默认 600 秒，1 秒到 7 天；重启应用后失效。`cache.set` 是 `put` 的别名 |
 | `cookie.get(地址, 名?)`、`cookie.set(地址, "a=1; b=2")`、`cookie.remove(地址, 名?)` | 读写这个书源的 Cookie；不写名字时读整条、删全部 |
 | `login.token`、`login.user`、`login.save(令牌, 用户名)` | 读取与保存登录凭据（与表单登录同一份） |
@@ -1428,7 +1506,7 @@ const cards = native.selAll('@css:.book@html', html);
 const titles = cards.map(card => native.sel('@css:.title@text', card));
 ```
 
-轻页“其他设置 → 兼容与诊断”提供 HTTP/1.1 兼容模式，作用于后续原生网络请求，不改变浏览器自身的协议选择。默认关闭。HTTPS 的 GET/HEAD 遇到协议异常或内部错误时至多自动尝试一次 HTTP/1.1；只有这次成功才按 origin 在当前进程中记忆 10 分钟，最多保留 128 项。POST 等可能产生副作用的请求不作这种自动重放。`2300999` 仅表示网络内部错误，不足以断定 HTTP/2、DNS 或服务器哪一方有问题。
+参考宿主“其他设置 → 兼容与诊断”提供 HTTP/1.1 兼容模式，作用于后续原生网络请求，不改变浏览器自身的协议选择。默认关闭。HTTPS 的 GET/HEAD 遇到协议异常或内部错误时至多自动尝试一次 HTTP/1.1；只有这次成功才按 origin 在当前进程中记忆 10 分钟，最多保留 128 项。POST 等可能产生副作用的请求不作这种自动重放。`2300999` 仅表示网络内部错误，不足以断定 HTTP/2、DNS 或服务器哪一方有问题。
 
 预算按每次后台函数运行计算，登录、动作按钮、动态选项与脚本分类也适用：
 
@@ -1440,7 +1518,7 @@ const titles = cards.map(card => native.sel('@css:.title@text', card));
 | 整体运行 | 60 秒，网络、等待与重试都需考虑；`sleep` 单次最多 5000 ms |
 | 取消 | 收到宿主取消信号后后台会话中止；离开页面是否发出取消取决于宿主接入，不能保证所有入口都立即取消 |
 
-轻页验证页自身最长等待 10 分钟。当前后台会话的网页等待扣时在 `browser.verify` 返回后才累计，等待过程中仍可能先触发 60 秒总时长限制；不要把 10 分钟当成脚本必然可等待的时长。发生超时后，完成验证再重试原操作。
+参考宿主验证页自身最长等待 10 分钟。当前后台会话的网页等待扣时在 `browser.verify` 返回后才累计，等待过程中仍可能先触发 60 秒总时长限制；不要把 10 分钟当成脚本必然可等待的时长。发生超时后，完成验证再重试原操作。
 
 报错时说明阶段和函数，例如“搜索脚本 search：Error: 接口返回错误”。调试页里每个请求、`log` 和返回值摘要都记成一条执行明细。QuickJS 阶段记录计算耗时与总耗时，计算超时也显示已用毫秒数，默认 2 秒上限不变。请求明细展示 requestId、传输通道、尝试过程、策略重试次数、传给传输层的请求头和可观测响应头；这不是服务端抓包结果。正文长度按字符数显示，未测量的网络字节数明确标为“未测量”。请求头和响应头中的 Cookie、Authorization、Token 等在写入报告前脱敏。
 
@@ -1518,7 +1596,7 @@ const titles = cards.map(card => native.sel('@css:.title@text', card));
 | `vars[].optionsScript` | `ctx.key` 是变量名，返回非空字符串数组；失败或空结果时由设置页回退到静态 `options` |
 | `explore.dynamicMenus.script` | `ctx.stage` 是 `menus`，返回分类数组 `[{ title, url }]` 或 `名称::地址` 文本；不发 `url` 请求，不能打开网页 |
 
-这些函数同样写在顶层 `js` 中，通过字段引用函数名，不能在 `script` 字段直接塞一段 JS。设置布局仍由应用绘制，脚本不能新增任意控件。`browser.verify`、`ui.toast`、`ui.refreshExplore` 依赖宿主的 `NativeSourceInteraction` 接入；`browser.render` 依赖网页抓取宿主。轻页已接入，其他宿主需单独确认。
+这些函数同样写在顶层 `js` 中，通过字段引用函数名，不能在 `script` 字段直接塞一段 JS。设置布局仍由应用绘制，脚本不能新增任意控件。`browser.verify`、`ui.toast`、`ui.refreshExplore` 依赖宿主的 `NativeSourceInteraction` 接入；`browser.render` 依赖网页抓取宿主。参考宿主已接入，其他宿主需单独确认。
 
 ### 原生脚本排错
 
@@ -1719,7 +1797,7 @@ const titles = cards.map(card => native.sel('@css:.title@text', card));
 | `toc` | 通用字段、`nextUrl`、`batch`、`reverse`；`list`\*、`fields.title`\*、`fields.url`\* |
 | 书籍 `fields` | `name`、`author`、`kind`、`intro`、`coverUrl`、`wordCount`、`lastChapter`、`updateTime`、`status`、`bookUrl`、`tocUrl`、`type` |
 | 章节 `fields` | `title`、`url`、`isVip`、`isPay`、`isVolume`、`tag` |
-| `content` | 通用字段；`text`、`images`、`audio`、`video`（至少一个）、`mediaError`、`mediaHeaders`、`replace`、`nextUrl`、`batch`、`fetch`、`imageDecode`、`links`、`comments` |
+| `content` | 通用字段；`text`、`images`、`audio`、`video`、`videoPage`、`script`（至少一个）；`mediaError`、`mediaHeaders`、`replace`、`nextUrl`、`batch`、`fetch`、`imageDecode`、`links`、`comments`。仅网页播放须使用视频类型，见[视频网页回退](#视频网页回退) |
 | `fetch.名称` | 请求字段、`when` |
 | `content.replace[]` | `pattern`\*、`with`、`flags` |
 | `content.imageDecode` | `algorithm`\*、`key`\*、`iv`、`keyEncoding`、`ivPrefixBytes`；或 `script`\*、`params`、`processPlainImages` |
@@ -1790,7 +1868,7 @@ const titles = cards.map(card => native.sel('@css:.title@text', card));
 | 正文里点按钮调接口 | `content.links` 的 `request` | 脚本生成卡片 |
 | 调试页执行明细 | 支持，并指出出错的是哪条规则 | 支持 |
 | 分卷标题 | `fields.isVolume` | 暂不支持 |
-| 视频内容（短剧等） | `type: video` 加 `content.video`，应用自带播放页 | 只能在正文里放链接，跳到网页播放 |
+| 视频内容（短剧等） | `type: video` 加 `content.video`；可选 `content.videoPage` 回退原站网页，也支持仅网页的视频源 | 只能在正文里放链接，跳到网页播放 |
 | 听书音色 | `voices` 声明列表，听书页点选 | 手动填写音色代码 |
 | 正文里打开网页（如视频播放页） | `content.links` | 脚本生成卡片 |
 | 脚本按需发请求、读写变量与 Cookie | 脚本阶段 `script`，同步写法，不需要重放 | 支持（`java.ajax` 等，经 ArkWeb 推测执行和重放） |
@@ -1812,7 +1890,7 @@ const titles = cards.map(card => native.sel('@css:.title@text', card));
 - 正文图片解密的标准算法整章共用一组密钥（`ivPrefixBytes` 时每张图各自取 IV）；封面另使用顶层 `coverDecode`，当前只支持 AES-CBC。
 - 段评和正文链接按钮只对文本正文生效。
 - 正文分页连第一页在内最多 200 页、拼接后最多 8 MB。逐页跟随时每页都要等上一页返回，几十页的长章节很慢，能算出总页数的站点请用列表写法。
-- 播放页播放的是书源给出的视频流地址，没有弹幕、清晰度切换和手势调节亮度音量。
+- 原生视频播放页播放书源给出的视频流地址，没有弹幕、清晰度切换和手势调节亮度音量；`videoPage` 网页回退使用网站自己的控件，应用不接管网页的清晰度、进度和连播。
 - 脚本还不能刷新已打开的目录和正文，也不能画任意布局的设置面板（设置页由变量、按钮、登录表单组成）。
 - 脚本阶段只有详情阶段能写书籍变量（`keep`），其他阶段只能读。
 
@@ -1845,7 +1923,7 @@ node --experimental-strip-types scripts/source-cover-check.mjs
 
 Node 回归的宿主只支持 JSONPath，不验证 CSS/XPath、真机 QuickJS、系统网页控件或实际站点登录；这些要在应用里用调试页验证。
 
-本文最初迁自轻页 `a7e6c2f94fa0db1b325bc8564e5baa4c177e0939` 的 `docs/book-source-development.md`，保留历史章节锚点，遵循项目 GPL-3.0 许可。
+本文最初迁自参考宿主 `a7e6c2f94fa0db1b325bc8564e5baa4c177e0939` 的 `docs/book-source-development.md`，保留历史章节锚点，遵循项目 GPL-3.0 许可。
 
 ---
 
@@ -2696,7 +2774,7 @@ QuickJS 不能直接替代 JSONPath/CSS/XPath：选择器需要解析 HTML/JSON 
 - AES、DES/3DES 的常见 Base64 加解密；
 - `java.getString`、`java.getStringList` 读取当前内容：`$.` 开头的 JSON 路径直接取值，其他规则由原生规则引擎按完整规则语法求值；
 - `java.getCookie`、`cookie.getCookie/setCookie/removeCookie`；
-- `java.toast` / `java.longToast`：详情、目录、正文阶段弹出的提示交给宿主显示（宿主通过 `SourceScriptNotice.setHandler` 接收，轻页显示为应用内提示），同一书源的同一条提示 15 秒内只转发一次；搜索、发现和登录界面有各自的提示方式，不经过这里；
+- `java.toast` / `java.longToast`：详情、目录、正文阶段弹出的提示交给宿主显示（宿主通过 `SourceScriptNotice.setHandler` 接收，参考宿主显示为应用内提示），同一书源的同一条提示 15 秒内只转发一次；搜索、发现和登录界面有各自的提示方式，不经过这里；
 - `java.randomUUID()`、`java.androidId()`；
 - `java.put/get`、`source.get/put/getVariable/setVariable`、`source.key`（与 Android 端 `source.key` 属性一致，取书源地址）、`book.getVariable/putVariable`；轻量引擎处理完 `java.*` 调用后，剩余的字符串链、三元和正则字面量表达式会交给 QuickJS 兜底求值，修复字面 `\n` 被展开、时间戳显示为 1970 之类的问题；
 - `baseUrl` 会随当前规则解析地址注入；分阶段 ArkWeb 还提供带 `get/put/save` 的临时 `infoMap`；
@@ -3157,7 +3235,7 @@ https://img.example/page.jpg,{"headers":{"Referer":"https://example.com/"}}
 
 ### 单书源调试
 
-书源管理页的操作菜单提供“调试”，书源编辑页在填写有效的 `bookSourceUrl` 后也可以直接进入调试页。轻页当前从书源管理进入时默认运行全链路，没有阶段切换按钮；入口携带阶段参数时按该阶段执行。下列是阶段含义，不是要求在页面中寻找同名选项：
+书源管理页的操作菜单提供“调试”，书源编辑页在填写有效的 `bookSourceUrl` 后也可以直接进入调试页。参考宿主当前从书源管理进入时默认运行全链路，没有阶段切换按钮；入口携带阶段参数时按该阶段执行。下列是阶段含义，不是要求在页面中寻找同名选项：
 
 - **搜索**：输入测试关键词，执行当前书源的搜索请求和列表字段解析。
 - **发现**：输入可选关键词，使用第一个发现分类执行列表解析。
@@ -3476,4 +3554,4 @@ Cookie、Authorization、Token 等请求/响应头在写入诊断报告前脱敏
 
 ## 4.4.935 兼容性核对
 
-本版本修复书列表 JS 字段批处理中对象返回表达式的处理。列表批量取字段应与逐字段求值保持一致；回归时覆盖对象返回、空值及列表字段。轻页新增的统计同步、海报和阅读控制设置由宿主维护，不属于公共书源接口。
+本版本修复书列表 JS 字段批处理中对象返回表达式的处理。列表批量取字段应与逐字段求值保持一致；回归时覆盖对象返回、空值及列表字段。参考宿主新增的统计同步、海报和阅读控制设置由宿主维护，不属于公共书源接口。

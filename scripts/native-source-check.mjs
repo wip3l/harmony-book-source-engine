@@ -970,6 +970,40 @@ try {
   equal([played.kind, played.text], ['video', 'https://api.example.com/player?item=c1'], '视频类书籍返回播放页地址');
   const readAsText = await videoRunner.content(book, { url: 'https://api.example.com/content?item_id=c1', title: '', index: 0 });
   equal(readAsText.kind, 'text', '非视频书籍不受 video 规则影响');
+  const videoChapter = { url: 'https://api.example.com/content?item_id=c1', title: '第1集', index: 0 };
+  const fallbackDefinition = JSON.parse(JSON.stringify(video));
+  fallbackDefinition.content.videoPage = '/watch/{{d.item_id}}';
+  fallbackDefinition.content.mediaHeaders = { Referer: 'https://example.com/' };
+  const fallbackRunner = () => new NativeSourceRunner(NativeSourceSpec.fromObject(fallbackDefinition), runHost, {});
+  const fallbackResult = await fallbackRunner().content({ ...book, type: 'video' }, videoChapter, true);
+  equal(fallbackResult.videoPage, 'https://api.example.com/watch/c1', '网页地址按响应地址补全');
+  equal(fallbackResult.mediaHeaders, { Referer: 'https://example.com/' }, '视频专用结果保留媒体头');
+  fallbackDefinition.content.videoPage = '= missingFunction()';
+  equal((await fallbackRunner().content({ ...book, type: 'video' }, videoChapter, true)).text, played.text,
+    '可选网页规则错误不阻断有效直链');
+  fallbackDefinition.content.videoPage = '/watch/{{d.item_id}}';
+  equal((await fallbackRunner().content({ ...book, type: 'video' }, videoChapter)).videoPage, '',
+    '通用正文入口不启用网页回退');
+  fallbackDefinition.content.video = '= ""';
+  fallbackDefinition.content.mediaError = '= "请先登录"';
+  const pageOnly = await fallbackRunner().content({ ...book, type: 'video' }, videoChapter, true);
+  equal([pageOnly.text, pageOnly.videoPage, pageOnly.mediaError],
+    ['', 'https://api.example.com/watch/c1', '请先登录'], '直链为空时仍保留网页和原因');
+  await rejectsWith(fallbackRunner().content({ ...book, type: 'video' }, videoChapter), /请先登录/,
+    '通用入口保持原来的失败语义');
+  for (const page of ['javascript:alert(1)', 'file:///data/test', 'data:text/html,hello', '']) {
+    fallbackDefinition.content.videoPage = '= ' + JSON.stringify(page);
+    await rejectsWith(fallbackRunner().content({ ...book, type: 'video' }, videoChapter, true), /请先登录/,
+      '无网页时不回退章节接口：' + page);
+  }
+  fallbackDefinition.content = { videoPage: '= "https://api.example.com/watch/1"' };
+  equal((await fallbackRunner().content({ ...book, type: 'video' }, videoChapter, true)).kind, 'video',
+    '支持只提供网页的视频书源');
+  fallbackDefinition.content.video = '= missingFunction()';
+  const brokenDirect = await fallbackRunner().content({ ...book, type: 'video' }, videoChapter, true);
+  equal(brokenDirect.videoPage, 'https://api.example.com/watch/1', '直链规则抛错仍保留有效网页');
+  equal(!!brokenDirect.mediaError, true, '直链规则抛错保留原因');
+  invalid((s) => { s.content.videoPage = { url: '/watch' }; }, '网页规则必须为字符串');
   invalid((s) => { s.type = 'movie'; }, '不认识的类型');
 
   // ---------- 分卷 ----------

@@ -192,6 +192,9 @@ export interface NativeParagraphComment {
 }
 
 export interface NativeContentResult {
+  /** 视频网页回退信息。仅视频专用调用允许没有直链时返回这些信息。 */
+  videoPage?: string;
+  mediaError?: string;
   /** text | images | audio | video */
   kind: string;
   text: string;
@@ -833,10 +836,11 @@ export class NativeSourceRunner {
     return added.length;
   }
 
-  async content(book: NativeBookInput, chapter: NativeChapterInput): Promise<NativeContentResult> {
+  async content(book: NativeBookInput, chapter: NativeChapterInput,
+    allowVideoPage: boolean = false): Promise<NativeContentResult> {
     const stage = this.scriptedContent(this.requireStage(this.definition.content, '正文'));
     const bookType = String(book.type || this.definition.type || 'text').toLowerCase();
-    const kind = bookType === 'video' && stage.video ? 'video' : (bookType === 'audio' && stage.audio ? 'audio' :
+    const kind = bookType === 'video' && (stage.video || stage.videoPage) ? 'video' : (bookType === 'audio' && stage.audio ? 'audio' :
       ((bookType === 'comic' || bookType === 'image') && stage.images ? 'images' :
         (stage.text ? 'text' : (stage.images ? 'images' : (stage.audio ? 'audio' : 'video')))));
     const empty = (baseUrl: string): NativeContentResult => ({
@@ -850,11 +854,35 @@ export class NativeSourceRunner {
     const firstBase = firstPage.baseUrl;
     await this.runExtraFetches(stage.fetch, firstPage);
     if (kind === 'audio' || kind === 'video') {
-      const audio = this.firstLine(this.first((await this.value(kind === 'audio' ? stage.audio : stage.video,
-        firstPage.scope, false, `content.${kind}`))));
-      if (!audio) throw new NativeSourceError((await this.mediaFailure(stage, firstPage, kind)));
+      let videoPage = '';
+      if (kind === 'video' && allowVideoPage && stage.videoPage) {
+        try {
+          const page = this.firstLine(this.first((await this.value(stage.videoPage,
+            firstPage.scope, false, 'content.videoPage')))).trim();
+          const resolved = page ? NativeExpr.resolveUrl(page, firstPage.baseUrl) : '';
+          if (/^https?:\/\/[^\s/?#@]+(?:[/?#][^\s]*)?$/i.test(resolved) && !/[\r\n\\]/.test(resolved)) {
+            videoPage = resolved;
+          }
+        } catch (_) {
+          // 可选网页规则失败不能阻断正常的视频直链。
+        }
+      }
+      let audio = '';
+      let mediaError = '';
+      try {
+        audio = this.firstLine(this.first((await this.value(kind === 'audio' ? stage.audio : stage.video,
+          firstPage.scope, false, `content.${kind}`))));
+      } catch (error) {
+        if (!videoPage) throw error;
+        mediaError = (error as Error).message || '视频地址解析失败';
+      }
+      if (!audio) {
+        mediaError = mediaError || (await this.mediaFailure(stage, firstPage, kind));
+        if (!videoPage) throw new NativeSourceError(mediaError);
+      }
       return {
-        kind: kind, text: NativeExpr.resolveUrl(audio, firstPage.baseUrl), baseUrl: firstPage.baseUrl,
+        kind: kind, text: audio ? NativeExpr.resolveUrl(audio, firstPage.baseUrl) : '', baseUrl: firstPage.baseUrl,
+        videoPage: videoPage, mediaError: mediaError,
         paragraphComments: [], chapterCommentUrl: '', links: [], images: [],
         mediaHeaders: (await this.renderHeaders(stage.mediaHeaders, firstPage.scope)), imageDecode: null
       };
@@ -1432,7 +1460,8 @@ export class NativeSourceRunner {
       text: '= data != null ? $.text : body',
       images: '= data != null ? $.images : []',
       audio: '= data != null ? $.audio : body',
-      video: '= data != null ? $.video : body'
+      video: '= data != null ? $.video : body',
+      videoPage: stage.videoPage || '= data != null ? $.videoPage : ""'
     });
   }
 

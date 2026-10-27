@@ -817,6 +817,13 @@ export class NativeSourceService {
     return chapters;
   }
 
+  /** 视频专用结果保留网页、请求头和直链解析错误，通用正文接口保持原行为。 */
+  static async getVideoContent(source: BookSource, http: HttpClient, book: Book, chapter: BookChapter,
+    cancelled: () => boolean): Promise<NativeContentResult> {
+    return await NativeSourceService.runner(source, http, cancelled, 0, null).content(
+      NativeSourceService.bookInput(source, book), { url: chapter.url, title: chapter.title, index: chapter.index }, true);
+  }
+
   static async getContent(source: BookSource, http: HttpClient, book: Book, chapter: BookChapter,
     cancelled: () => boolean, debugContext: BookSourceDebugContext | null = null): Promise<NativeContentResult> {
     const result = await NativeSourceService.runner(source, http, cancelled, 0, debugContext).content(

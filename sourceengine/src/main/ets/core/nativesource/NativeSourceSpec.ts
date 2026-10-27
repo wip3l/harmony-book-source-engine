@@ -246,6 +246,8 @@ export interface NativeContentSpec extends NativeStageSpec {
   audio?: string;
   /** 视频类书籍这一集的视频流地址，由应用自带的播放页播放。 */
   video?: string;
+  /** 当前集的网页播放页，可与 video 同时配置；不会从章节接口地址猜测。 */
+  videoPage?: string;
   /** audio / video 为空时给用户看的原因，可读取附加请求的结果；不写时从接口返回的 code/message 归纳。 */
   mediaError?: string;
   /** 取图片、音频时附带的请求头，例如 Referer。 */
@@ -641,8 +643,11 @@ export class NativeSourceSpec {
     }
     if (definition.content) {
       const content = definition.content;
-      if (!content.text && !content.images && !content.audio && !content.video && !content.script) {
-        errors.push('content 需要 text、images、audio 或 video 之一');
+      if (content.videoPage !== undefined && typeof content.videoPage !== 'string') {
+        errors.push('content.videoPage 必须是字符串规则');
+      }
+      if (!content.text && !content.images && !content.audio && !content.video && !content.videoPage && !content.script) {
+        errors.push('content 需要 text、images、audio、video、videoPage 或 script 之一');
       }
       if (content.replace !== undefined && !Array.isArray(content.replace)) errors.push('content.replace 必须是数组');
       NativeSourceSpec.checkBatch(content.batch, 'content.batch', errors);

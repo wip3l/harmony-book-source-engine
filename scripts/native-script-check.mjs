@@ -265,6 +265,12 @@ try {
   });
   host = scriptHost(respond);
   const text = await new NativeSourceRunner(contentSource, host, {}).content(book, chapter);
+  const videoSource = define({ ...base, type: 'video', js: `
+    function content() { return { video: '', videoPage: 'https://api.example.com/watch/1' }; }
+  `, content: { script: 'content' } });
+  const videoResult = await new NativeSourceRunner(videoSource, host, {}).content({ ...book, type: 'video' }, chapter, true);
+  equal([videoResult.kind, videoResult.text, videoResult.videoPage],
+    ['video', '', 'https://api.example.com/watch/1'], '脚本返回空直链时保留 videoPage');
   equal([text.kind, text.text], ['text', '第一段\n第二段'], '返回字符串直接作为正文');
   const comic = await new NativeSourceRunner(contentSource, host, {}).content({ ...book, type: 'comic' }, { ...chapter, index: 1 });
   equal([comic.kind, comic.images], ['images', ['https://api.example.com/i/1.jpg', 'https://api.example.com/i/2.jpg']],
