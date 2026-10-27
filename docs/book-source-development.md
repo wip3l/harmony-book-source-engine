@@ -12,7 +12,7 @@
 | 简听的导入限制、安全预算、UI 和缓存 | [简听宿主说明](https://github.com/end-web/HarmonyOS-book/blob/main/docs/BOOK_SOURCE_RULES.md) |
 | 封面解密 | 本文 `coverDecode` 字段；宿主还需接入 [SourceCoverLoader](cover-decoding.md)，不能仅靠更新文档或 JSON 获得显示能力 |
 
-本文最近一次按代码与设备结果核对时轻页为 4.4.934 的本地开发构建（2026-10-26）。下述新增能力以包含本轮引擎及宿主改动的构建为准，不代表此前发布的所有同版本安装包都已具备。文中的界面、视频播放和调试说明以轻页为准，不代表所有宿主都已实现。简听与轻页（4.0.921 起）都已接入封面解密。
+本文对应轻页 4.4.935 发布构建；此前代码与设备核对记录为 2026-10-26 的本地开发构建，本次文档更新不表示重新执行真机验收。下述新增能力以包含本轮引擎及宿主改动的构建为准，不代表此前发布的所有同版本安装包都已具备。文中的界面、视频播放和调试说明以轻页为准，不代表所有宿主都已实现。简听与轻页（4.0.921 起）都已接入封面解密。
 
 > 示例只使用 `example.com`、本地测试服务和虚构数据，不发布实际站点书源或登录凭据。
 
@@ -3472,3 +3472,7 @@ Cookie、Authorization、Token 等请求/响应头在写入诊断报告前脱敏
 - 发现/阅读全链路校验：`entry/src/main/ets/core/book/ExploreReadingValidator.ts`
 - 用户控制的精确主机证书例外：`sourceengine/src/main/ets/core/http/TlsTrustStore.ts`
 - 规则执行快照与阅读交互桥接：`entry/src/main/ets/core/book/BookSourceRuntimeSnapshot.ts`、`entry/src/main/ets/core/book/ReaderInteractionProvider.ts`
+
+## 4.4.935 兼容性核对
+
+本版本修复书列表 JS 字段批处理中对象返回表达式的处理。列表批量取字段应与逐字段求值保持一致；回归时覆盖对象返回、空值及列表字段。轻页新增的统计同步、海报和阅读控制设置由宿主维护，不属于公共书源接口。
