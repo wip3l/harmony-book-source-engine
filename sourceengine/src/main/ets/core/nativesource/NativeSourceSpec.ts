@@ -7,6 +7,8 @@
  * 本文件不依赖系统 API，可直接在 Node 回归脚本中加载。
  */
 
+import { HttpRetryPolicy } from '../http/HttpRetryPolicy';
+import type { HttpRetrySpec } from '../http/HttpRetryPolicy';
 import { NativeExpr } from './NativeExpr';
 import { NativeJsPrelude } from './NativeJsPrelude';
 import type { NativeValue } from './NativeExpr';
@@ -14,8 +16,8 @@ import type { NativeValue } from './NativeExpr';
 export interface NativeVarSpec {
   key: string;
   label?: string;
-  options?: string[];
-  default?: string;
+  options?: (string | number)[];
+  default?: string | number;
   /** 是否在发现页显示为筛选项。 */
   filter?: boolean;
   /** js 里的函数名：打开书源设置页时运行它取选项列表（例如测速后列出可用线路），失败时用 options。 */
@@ -41,7 +43,7 @@ export interface NativeRequestSpec {
   /** 请求参数与表单的编码，如 gbk；不写为 UTF-8。响应的解码由应用自动识别。 */
   charset?: string;
   /** 请求失败后的重试次数，0 到 3。 */
-  retry?: number;
+  retry?: number | HttpRetrySpec;
 }
 
 export interface NativeWebViewSpec {
@@ -474,6 +476,12 @@ export class NativeSourceSpec {
       if (keys.has(item.key)) errors.push(`vars 里的 key 重复：${item.key}`);
       keys.add(item.key);
       if (item.options !== undefined && !Array.isArray(item.options)) errors.push(`vars.${item.key}.options 必须是数组`);
+      if (Array.isArray(item.options) && item.options.some((option: string | number): boolean =>
+        typeof option !== 'string' && (typeof option !== 'number' || !Number.isFinite(option)))) {
+        errors.push(`vars.${item.key}.options 每一项必须是字符串或有限数字`);
+      }
+      if (item.default !== undefined && typeof item.default !== 'string' &&
+        (typeof item.default !== 'number' || !Number.isFinite(item.default))) errors.push(`vars.${item.key}.default 必须是字符串或有限数字`);
     }
 
     if (definition.lib !== undefined && typeof definition.lib !== 'string') {
@@ -753,6 +761,10 @@ export class NativeSourceSpec {
   /** 递归检查每个字符串值：表达式和模板的语法，以及是否混入了脚本。 */
   private static checkValues(value: NativeValue, path: string, errors: string[]): void {
     if (errors.length >= 20 || value === null || value === undefined) return;
+    if (/^(search|explore|detail|toc|content|cache\.[^.]+|actions\[\d+\]|login\.(submit|sendCode|check))(\.(fetch\.[^.]+|dynamicMenus|menus\[\d+\]))?\.retry$/.test(path)) {
+      try { HttpRetryPolicy.parse(value); } catch (e) { errors.push(`${path}：${(e as Error).message}`); }
+      return;
+    }
     if (typeof value === 'string') {
       const text = value.trim();
       let problem = '';

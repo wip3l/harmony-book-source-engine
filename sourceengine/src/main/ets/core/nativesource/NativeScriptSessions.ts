@@ -76,6 +76,7 @@ export class NativeScriptSessions implements NativeScriptEngine {
       pooled.handler = null;
     }
     this.giveBack(pooled);
+    if (options.timing) options.timing(result.cpuMs, Date.now() - startedAt);
     if (result.success) {
       try {
         return NativeJsPrelude.parseResult(result.value);
@@ -83,7 +84,7 @@ export class NativeScriptSessions implements NativeScriptEngine {
         throw new Error('返回值无法转换');
       }
     }
-    if (result.timedOut) throw new Error(`计算时间超过 ${Math.round(options.cpuMs / 1000)} 秒`);
+    if (result.timedOut) throw new Error(`计算时间超过 ${Math.round(options.cpuMs / 1000)} 秒（已用 ${result.cpuMs} ms）`);
     if (overtime) throw new Error(`运行超过 ${Math.round(options.wallMs / 1000)} 秒`);
     if (cancelled || result.cancelled) throw new Error('已取消');
     throw new Error(NativeJsPrelude.shortError(result.error));

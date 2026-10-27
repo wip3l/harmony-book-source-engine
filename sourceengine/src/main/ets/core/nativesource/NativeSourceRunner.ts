@@ -5,6 +5,8 @@
  */
 
 import { CooperativeScheduler } from '../concurrency/CooperativeScheduler';
+import { HttpRetryPolicy } from '../http/HttpRetryPolicy';
+import type { HttpRetrySpec } from '../http/HttpRetryPolicy';
 import { NativeExpr, NativeExprError, NativeScope } from './NativeExpr';
 import { SourceCoverUrl } from './SourceCoverUrl';
 import { NativePureRule } from './NativePureRule';
@@ -31,7 +33,7 @@ export interface NativeRequest {
   /** 网页渲染的最长等待秒数。 */
   webTimeout: number;
   charset: string;
-  retry: number;
+  retry: number | HttpRetrySpec;
   /** 单请求总等待预算（毫秒），由脚本显式指定；包含限流、跳转和重试。 */
   timeoutMs?: number;
   /** 主请求：遇到验证页时应提示用户去验证。附加请求不触发。 */
@@ -53,6 +55,10 @@ export interface NativeResponse {
   url: string;
   /** Empty when the transport cannot observe the final destination. */
   finalUrl?: string;
+  headers?: Record<string, string>;
+  /** False for DOM-rendered pages or failures without an HTTP response. */
+  headersAvailable?: boolean;
+  requestId?: string;
   error: string;
 }
 
@@ -532,7 +538,7 @@ export class NativeSourceRunner {
   static resolveVars(definition: NativeSourceDefinition, stored: Record<string, NativeValue>): Record<string, string> {
     const values: Record<string, string> = {};
     for (const item of definition.vars || []) {
-      const options = Array.isArray(item.options) ? item.options.map((option: string): string => String(option)) : [];
+      const options = Array.isArray(item.options) ? item.options.map((option: string | number): string => String(option)) : [];
       const fallback = item.default !== undefined ? String(item.default) : (options.length > 0 ? options[0] : '');
       const saved = stored && stored[item.key] !== undefined && stored[item.key] !== null ? String(stored[item.key]) : '';
       const open = options.length === 0 || !!item.optionsScript;
@@ -1317,7 +1323,9 @@ export class NativeSourceRunner {
     try {
       const value: NativeValue = await this.scriptEngine().run(fn, ctx, scriptHost.handler(), {
         cpuMs: limits.cpuMs, wallMs: limits.wallMs, cancelled: this.cancelled,
-        pausedMs: (): number => scriptHost.pausedMs
+        pausedMs: (): number => scriptHost.pausedMs,
+        timing: (cpuMs: number, wallMs: number): void => this.traceScript(stageName, fn, 'timing',
+          `计算 ${cpuMs} ms · 总耗时 ${wallMs} ms · 网页交互等待 ${scriptHost.pausedMs} ms`, '')
       });
       return { value: value, requests: scriptHost.requestCount, ms: Date.now() - startedAt };
     } catch (e) {
@@ -1507,7 +1515,7 @@ export class NativeSourceRunner {
       webWaitFor: web && web.waitFor ? String(web.waitFor).trim() : '',
       webTimeout: Math.max(3, Math.min(Number(web && web.timeout) || 15, 60)),
       charset: String(spec.charset || '').trim(),
-      retry: Math.max(0, Math.min(Math.floor(Number(spec.retry) || 0), 3)),
+      retry: HttpRetryPolicy.parse(spec.retry),
       primary: primary
     };
   }

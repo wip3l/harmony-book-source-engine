@@ -567,6 +567,39 @@ try {
   equal(NativeSourceSpec.validate(define({ ...base, js: 'function s() {}', actions: [{ label: '只有脚本', script: 's' }],
     login: { script: 's' } })), [], '只写 script 的按钮和登录是合法的');
 
+  // Final headers cross the worker bridge; HTTP failures remain inspectable.
+  {
+  const headerSource = define({...base, js: `function search() {
+    const r=http.get('/headers'); return [{name:JSON.stringify([r.status,r.headers,r.headersAvailable,r.requestId]),bookUrl:'/book'}];
+  }`,search:{script:'search'}});
+  const headerHost=scriptHost(respond);
+  headerHost.fetch=async request=>({ok:false,status:429,body:'slow',url:request.url,error:'HTTP 429',
+    headers:{'Retry-After':'1','Content-Type':'text/plain'},headersAvailable:true,requestId:'http-7'});
+  equal(JSON.parse((await new NativeSourceRunner(headerSource,headerHost,{}).search('',1))[0].name),
+    [429,{'retry-after':'1','content-type':'text/plain'},true,'http-7'],'headers and availability cross the bridge');
+  const aggregate = strict => define({...base,js:`function search() {
+    const r=http.all(['/first','/second','/third'],{failOnPartial:${strict}});
+    return [{name:JSON.stringify(r.map(x=>[x.status,x.url])),bookUrl:'/book'}];
+  }`,search:{script:'search'}});
+  const aggregateHost=scriptHost(respond);
+  aggregateHost.fetch=async request=>{
+    await sleep(request.url.endsWith('/first')?30:1);
+    const failed=request.url.endsWith('/second');
+    return {ok:!failed,status:failed?403:200,body:'page',url:request.url,error:failed?'HTTP 403':''};
+  };
+  const ordered=JSON.parse((await new NativeSourceRunner(aggregate(false),aggregateHost,{}).search('',1))[0].name);
+  equal(ordered.map(x=>x[0]),[200,403,200],'default aggregation keeps failures in input order');
+  await rejects(new NativeSourceRunner(aggregate(true),aggregateHost,{}).search('',1),
+    /成功 2，失败 1；\[1\].*HTTP 403/, 'strict aggregation reports zero-based failed indices');
+  const empty=define({...base,js:`function search(){return [{name:String(http.all([],{failOnPartial:true}).length),bookUrl:'/book'}]}`,search:{script:'search'}});
+  equal((await new NativeSourceRunner(empty,aggregateHost,{}).search('',1))[0].name,'0','strict empty batch succeeds');
+  invalid(o=>{o.search.retry={times:2,onStatus:[200]};},/retry.onStatus/,'invalid declarative retry rejected on import');
+  invalid(o=>{o.vars=[{key:'limit',options:[{}]}];},/字符串或有限数字/,'structured variable options rejected');
+  const numeric=define({...base,vars:[{key:'limit',options:[1,2,3],default:2}]});
+  equal(NativeSourceSpec.validate(numeric),[],'numeric options accepted explicitly');
+  equal(NativeSourceRunner.resolveVars(numeric,{}).limit,'2','numeric default normalized to text');
+  }
+
   console.log(`Native script stage check passed: ${assertions} assertions.`);
 } finally {
   mods.cleanup();

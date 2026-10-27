@@ -335,3 +335,4 @@ export type { NativeCoverDecodeSpec } from './src/main/ets/core/nativesource/Nat
 export { NativePureParser } from './src/main/ets/core/nativesource/NativePureParser';
 export { NativePureRule } from './src/main/ets/core/nativesource/NativePureRule';
 export { SourceDefinitionCache } from './src/main/ets/core/nativesource/SourceDefinitionCache';
+export type { HttpRetrySpec } from './src/main/ets/core/http/HttpRetryPolicy';

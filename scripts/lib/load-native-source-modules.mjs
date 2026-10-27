@@ -9,6 +9,9 @@ import { pathToFileURL } from 'node:url';
 import { readEtsModule, toNodeModuleSource } from './ets-module-staging.mjs';
 
 const MODULES = [
+  'core/http/HttpRetryPolicy.ts',
+  'core/http/HttpHeaderValues.ts',
+  'core/book/BookSourceDebugModels.ts',
   'core/nativesource/SourceDefinitionCache.ts',
   'core/nativesource/SourceCoverUrl.ts',
   'core/rule/JsonPathEvaluator.ts',

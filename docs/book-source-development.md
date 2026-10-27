@@ -12,9 +12,22 @@
 | 简听的导入限制、安全预算、UI 和缓存 | [简听宿主说明](https://github.com/end-web/HarmonyOS-book/blob/main/docs/BOOK_SOURCE_RULES.md) |
 | 封面解密 | 本文 `coverDecode` 字段；宿主还需接入 [SourceCoverLoader](cover-decoding.md)，不能仅靠更新文档或 JSON 获得显示能力 |
 
-本文最近一次按代码核对时轻页为 4.4.934（2026-10-26）。文中的界面、视频播放和调试说明以轻页为准，不代表所有宿主都已实现。简听与轻页（4.0.921 起）都已接入封面解密。
+本文最近一次按代码与设备结果核对时轻页为 4.4.934 的本地开发构建（2026-10-26）。下述新增能力以包含本轮引擎及宿主改动的构建为准，不代表此前发布的所有同版本安装包都已具备。文中的界面、视频播放和调试说明以轻页为准，不代表所有宿主都已实现。简听与轻页（4.0.921 起）都已接入封面解密。
 
 > 示例只使用 `example.com`、本地测试服务和虚构数据，不发布实际站点书源或登录凭据。
+
+## 本轮原生书源能力更新
+
+| 内容 | 新增或变更 | 开发时注意 |
+| --- | --- | --- |
+| 脚本 HTTP 结果 | 增加 `headers`、`headersAvailable`、`requestId` | 先判断头是否可取得，再按小写名称读取；HTTP 失败状态也可有响应头 |
+| 批量请求 | `http.all` 增加 `failOnPartial: true` | 默认仍逐项返回；严格模式等待整批完成后汇总失败，不会遇到第一个 HTTP 错误就停止其他项 |
+| 条件重试 | `retry` 支持状态码、固定/指数退避与 Retry-After 策略对象 | 数字形式保留；对象策略仅重放无请求体的 GET/HEAD，并受总预算约束 |
+| 静态变量 | `vars[].options/default` 明确接受字符串与有限数字 | 运行时按文本使用；动态 `optionsScript` 仍返回字符串数组 |
+| 漫画媒体头 | 允许合法自定义头，并按 origin 处理跳转、按请求头隔离缓存 | 需要 API 22+ 且拦截可用；音频播放器内部跳转不属于这套图片处理逻辑 |
+| 轻页诊断 | 请求轨迹、脚本计算/总耗时、报告前置摘要、可选 3000 章目录检查 | 默认取样仍为 32 章；章节数、脚本计算与完整目录阶段耗时分别查看 |
+
+WebView 加载、`browser.render`、默认 User-Agent、按钮上下文和详情 `keep` 都是已有能力，本轮补充使用说明和验证边界。默认脚本计算预算仍为 2 秒，没有扩大到 5 秒，也没有增加通用的挑战页自动回退。
 
 ## 两种书源格式
 
@@ -29,7 +42,7 @@
 | 识别方式 | JSON 里带 `"sourceFormat": "native"` | 其余情况 |
 | 文档位置 | [第一部分](#第一部分原生书源) | [第二部分](#第二部分兼容书源已过时) |
 
-两种书源在搜索、发现、书架、阅读里混用，用户不需要区分；书源管理页可以按类型筛选。两种格式共用同一个请求层（限流、Cookie、编码识别、验证页处理）和同一个选择器解析器，所以选择器写法、请求行为在两边一致。
+两种书源在搜索、发现、书架、阅读里混用，用户不需要区分；书源管理页可以按类型筛选。两种格式共用请求层（限流、Cookie、编码识别、验证页处理）和选择器解析器，但字段与脚本接口仍以各自格式的说明为准，不能直接互换写法。
 
 ## 阅读路线
 
@@ -492,7 +505,7 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 | `body` | 请求体。写成对象时其中的字符串按模板渲染，整体按 JSON 发送；写成文本时按模板渲染后原样发送 |
 | `webView` | 为 `true` 时用内置浏览器加载页面，取执行完网页自身脚本后的内容。可写成 `{ "waitFor": ".chapter-content", "timeout": 15 }`，等这个选择器对应的元素出现再取整页。`timeout` 单位为秒，默认 15，取值 3 到 60；到时间还没出现时按失败处理，提示“网页等待条件未满足”。只用于必须渲染才有数据的站点，比普通请求慢得多 |
 | `charset` | 请求参数和表单的编码，例如 `gbk`。要求搜索词按 GBK 编码的老站点需要它；响应的解码由应用自动识别，不用写 |
-| `retry` | 请求失败后的重试次数，0 到 3，默认不重试 |
+| `retry` | 数字 0–3 保留原有重试语义；也可写条件退避对象，见下文“条件重试”。默认不重试 |
 | `script` | 由 `js` 里的函数代替请求，见[脚本阶段](#脚本阶段-script) |
 | `let` | 本阶段的派生值，拿到响应之后、取字段之前按书写顺序求值 |
 | `fail` | 求值结果非空（且不是 `false`）时视为接口报错，文本即展示给用户的错误信息，例如 `= data.code != 0 ? data.msg : ''` |
@@ -719,7 +732,7 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 | `audio` | 音频地址（听书） |
 | `video` | 这一集的视频流地址（如 mp4、m3u8），由应用自带的播放页播放。每次切集都会重新请求，地址带时效也没关系 |
 | `mediaError` | 可选。`audio` / `video` 求值为空时显示给用户的原因，可以读取附加请求的结果（例如「这本书没有真人录音版」）。不写或求值为空时，应用从附加请求和主请求里第一个 `code` 不为 0 的响应归纳原因（如「音频接口返回失败：ILLEGAL_ACCESS（code=110）」） |
-| `mediaHeaders` | 取漫画图片和音频时附带的请求头，例如 `{ "Referer": "{{server}}/" }`。只接受 Referer、Origin、User-Agent、Accept、Accept-Language、Authorization、Cookie、Range。对正文文字里夹带的插图和视频不生效 |
+| `mediaHeaders` | 漫画图片和音频的请求头，例如 `{ "Referer": "{{server}}/" }`；漫画还支持合法自定义头，要求和重定向规则见[媒体请求头与重定向](#媒体请求头与重定向)。不作用于正文文字里的插图和视频；封面使用 `coverHeaders` |
 | `replace` | 净化规则列表：`{ "pattern": "正则", "with": "替换文本", "flags": "g" }`。按顺序作用于 `text`；`with` 不写时删除匹配内容，`flags` 默认 `g` |
 | `nextUrl` | 正文分页地址，见下 |
 | `batch` | `nextUrl` 用列表写法时每批并发请求的页数，1 到 16 的整数，默认 4 |
@@ -727,6 +740,33 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 | `imageDecode` | 漫画图片解密，见下 |
 | `links` | 正文末尾的按钮，见下 |
 | `comments` | 段评与章末评论入口，见下 |
+
+#### 媒体请求头与重定向
+
+下面是正文规则片段，`vars.mediaToken` 来自书源自行声明和保存的变量：
+
+```json
+{
+  "images": "$.images[*]",
+  "mediaHeaders": {
+    "Referer": "https://example.com/",
+    "X-Media-Token": "{{vars.mediaToken}}"
+  }
+}
+```
+
+漫画图片允许合法自定义头；不接受 Host、Connection、Content-Length、Transfer-Encoding 等传输控制头、Proxy-/Sec- 前缀，以及含换行或 NUL 的值。带自定义头时要求 API 22+ 且请求拦截可用；不满足时在发送前明确报错。原有标准头用法保持兼容。
+
+带自定义头的图片请求由应用逐跳处理重定向：
+
+- 同 origin 保留请求头；origin 按协议、主机和端口判断，同 IP 不同端口也属于跨 origin。
+- 跨 origin 移除自定义头、Cookie、Authorization、Proxy-Authorization 和 Origin，后续不再从 CookieStore 注入 Cookie；再跳回原 origin 也不恢复已移除的头。
+- 支持 GET/HEAD 的 301、302、303、307、308，最多 8 次跳转；检测循环、共享截止时间与取消信号，拒绝非 HTTP(S) 或带用户名密码的目标地址。
+- 不依赖 SDK 自动跳转携带头；先截停跳转，再发起下一跳。空 302 响应体可正常处理。下载失败保留明确错误，不回退到不带自定义头的图片 URL。
+
+请求头参与漫画图片缓存身份，改变授权头会使用不同缓存。若跨 origin 图片服务也要求令牌，应由书源明确提供合法的目标地址与对应请求参数，不能依赖跳转将原站凭据带过去。
+
+音频显式请求头沿用播放器传入方式，播放器内部重定向不受上述图片策略控制。这里只说明漫画下载链路，不把其结论扩展到封面、正文插图、视频或所有宿主。轻页 API 26 已用受控 HTTP 服务验证同 origin / 跨 origin 302；其他系统和传输组合仍需对应设备验证。
 
 **正文分页 `nextUrl`** 与目录的写法相同：
 
@@ -1048,8 +1088,8 @@ function restoreImage(bytes, ctx) {
 | --- | --- |
 | `key` | 变量名，只能用字母、数字和下划线，不能重复。规则里用 `vars.key` 读取 |
 | `label` | 设置页和筛选栏上显示的名称，不写时用 `key` |
-| `options` | 可选值列表。写了就在设置页显示为下拉，否则是输入框 |
-| `default` | 默认值。不写时取 `options` 的第一项，没有 `options` 时为空串 |
+| `options` | 字符串或有限数字组成的数组，数字按 String(value) 转为文本；对象、布尔值和 null 不合法。写了就在设置页显示为下拉，否则是输入框 |
+| `default` | 字符串或有限数字，保存和使用时为文本。不写时取 `options` 的第一项，没有 `options` 时为空串 |
 | `filter` | 为 `true` 且有 `options` 时，显示在发现页顶部作为筛选项，切换后立即生效 |
 | `optionsScript` | `js` 里的函数名，打开书源设置页时运行它取选项列表，见下 |
 
@@ -1295,8 +1335,8 @@ fn sign(path, ts) {
 
 | 接口 | 说明 |
 |---|---|
-| `http.get(地址, 选项?)`、`http.post(地址, 请求体, 选项?)`、`http.request({ url, method, headers, body, charset, retry, webView, timeout })` | 同步发请求，返回 `{ ok, status, body, url, finalUrl, error }`，`json()` 解析正文（不是 JSON 时抛错）。相对地址按书源地址补全，也接受 `data:` 地址；请求体是对象时按 JSON 发送并自动加 `Content-Type: application/json`。请求失败不抛错，看 `ok` 和 `status`。响应头拿不到，`Set-Cookie` 会自动保存，用 `cookie.get` 读取 |
-| `http.all([请求, …], { concurrency, timeout }?)` | 按顺序返回。每项可以是地址或请求对象；默认最多 8 个并发，`concurrency` 可设 1–8 的整数，完成一项就补下一项。`timeout` 为每项的默认超时，可由请求对象中的同名字段覆盖 |
+| `http.get(地址, 选项?)`、`http.post(地址, 请求体, 选项?)`、`http.request({ url, method, headers, body, charset, retry, webView, timeout })` | 同步发请求，返回 `{ ok, status, body, url, finalUrl, error, headers, headersAvailable, requestId }`，`json()` 解析正文（不是 JSON 时抛错）。相对地址按书源地址补全，也接受 `data:` 地址；请求体是对象时按 JSON 发送并自动加 `Content-Type: application/json`。请求失败不抛错，看 `ok` 和 `status`。`headers` 键名为小写，同名多值用逗号加空格连接，`set-cookie` 多行用换行连接；`headersAvailable` 为 false 时表示未取得响应头（例如 WebView DOM、网络失败），不能据空对象断言服务器没有该头。4xx/5xx 也保留可观测响应头。Cookie 继续自动保存 |
+| `http.all([请求, …], { concurrency, timeout, failOnPartial }?)` | 按顺序返回。每项可以是地址或请求对象；默认最多 8 个并发，`concurrency` 可设 1–8 的整数，完成一项就补下一项。`timeout` 为每项的默认超时，可由请求对象中的同名字段覆盖。默认返回全部逐项结果；`failOnPartial: true` 在整批完成且任一项失败时抛错，报告成功数、失败数和从 0 开始的失败索引。取消/超预算仍立即报错 |
 | `vars.get(名)`、`vars.set(名, 值)` | 书源变量，写入后保存（和书源设置页是同一份），可以写没有在 `vars` 里声明的键 |
 | `temp.get(名)`、`temp.set(名, 值)` | 当前 `NativeSourceRunner` 实例内的临时值；轻页按操作创建运行器，不能依赖它把详情数据传给后续目录操作 |
 | `cache.get(名)`、`cache.put(名, 值, 有效秒数?)` | 内存缓存，按书源分开，有效期默认 600 秒，1 秒到 7 天；重启应用后失效。`cache.set` 是 `put` 的别名 |
@@ -1331,6 +1371,62 @@ const responses = http.all([
 
 请求结果另外提供 `finalUrl`：宿主实际观测到的重定向最终地址。HarmonyOS API 22 及以上通过网络拦截接口取得；浏览器抓取路径取页面最终地址。旧系统或不支持拦截的传输实现返回空字符串，不能把空值当成“没有重定向”。`url` 保持原有的地址解析基准语义。需要防止章节被跳转到别处时，可在 `finalUrl` 非空时验证它；为空时继续核对正文中的章节标识或 canonical。
 
+
+### 读取响应头与关联请求
+
+在阶段脚本中，响应头通过 `headers` 读取；诊断编号用于关联请求明细：
+
+```js
+function search(ctx) {
+  const r = http.get('/api/search?q=' + encodeURIComponent(ctx.key));
+  if (r.headersAvailable) {
+    log('content-type: ' + (r.headers['content-type'] || '(未返回)'));
+  } else {
+    log('当前传输未取得响应头');
+  }
+  if (!r.ok) throw new Error((r.requestId || '(无请求编号)') + ' HTTP ' + r.status);
+  return r.json();
+}
+```
+
+该示例假定接口返回可作为搜索列表解析的数据；需要其他字段映射时配合 `list/fields`。头名称统一为小写，多值用 `, ` 连接，`set-cookie` 用换行连接。`headersAvailable=false` 时不能将空对象解释成“服务器没有返回头”；WebView DOM 抓取不伪造响应头。4xx/5xx 的原生 HTTP 响应仍可读取已取得的头，Cookie 继续由原有存储处理。
+
+`requestId` 是宿主请求诊断编号，不是服务器业务 ID；未提供时为空字符串，不应作为书籍主键或跨重启的持久标识。
+
+### 条件重试
+
+声明式请求和脚本请求均支持以下对象式策略（数字形式保持兼容）：
+
+```js
+const r = http.get('/api/list', {
+  timeout: 12000,
+  retry: { times: 2, onStatus: [429, 503], backoff: 'exp', base: 800,
+    maxDelay: 5000, respectRetryAfter: true }
+});
+if (!r.ok) throw new Error(r.requestId + ' HTTP ' + r.status);
+```
+
+- times 为初次请求以外的次数，必须为 0–3；onStatus 默认为 [429,503]，只接受 400–599 的整数。
+- backoff 可为 fixed 或 exp（默认）；base 默认 800 ms，maxDelay 默认 10000 ms，均为 1–60000 的整数，maxDelay 不小于 base。首轮等待 base，指数模式随后翻倍，受 maxDelay 限制。
+- respectRetryAfter 默认 true，支持秒数与 HTTP 日期。服务端要求超过 maxDelay 时保留失败响应、停止重试，不提前重试；剩余总预算不足时返回超时。
+- 对象策略只重放无请求体的 GET/HEAD。POST 等只执行一次。对象策略接管重试，不再叠加底层自动 HTTP/1.1 重试、超时重试或 WebView 传输回退；手动或已有记忆选择的 HTTP/1.1 首次请求仍有效。
+- 没有显式 timeout 时，对象策略仍有最多 60 秒总预算；脚本阶段同时受剩余总预算约束。每轮最多跟随 3 次显式重定向；SDK 内部跳转由平台控制。最多 4 轮、16 次显式 HTTP 调用。取消会中断退避等待。
+
+完整聚合使用 `http.all(list, { failOnPartial: true })`。失败信息包含成功/失败数量、从 0 开始的失败索引、HTTP 状态、请求编号和脱敏地址；不会返回一个伪装成完整结果的成功子集。允许部分结果时保留默认模式，逐项检查 `ok` 并通过 `log` 或合适的界面提示说明缺失页，不能把缺页目录称为完整结果。
+
+### WebView 与跨阶段上下文
+
+`webView: true` 或 `webView: { waitFor: '#app', timeout: 15 }` 可用于声明式阶段及 `http.get` 的选项。`browser.render` 可加载页面并求值 JS。搜索/发现也能加载和渲染网页；`browser.verify` 是交互式验证，搜索/发现会提示“去验证”，不自动弹出网页。页面加载不保证交互验证通过。
+
+`http` 的 timeout 单位为毫秒；`webView.timeout` 和 `browser.render` 的 timeout 为秒。未写 UA 时原生 HTTP 有宿主默认值。按钮上下文提供 `ctx.source.url`，`ctx.baseUrl` 初始也为书源 URL。详情脚本 `keep('id', value)` 后，目录/正文读 `ctx.book.vars.id`。
+
+脚本中通过 `native.sel`、`native.now` 等调用内置函数，不能直接按表达式里的裸函数名调用。嵌套选择器不必改写为正则：
+
+```js
+const cards = native.selAll('@css:.book@html', html);
+const titles = cards.map(card => native.sel('@css:.title@text', card));
+```
+
 轻页“其他设置 → 兼容与诊断”提供 HTTP/1.1 兼容模式，作用于后续原生网络请求，不改变浏览器自身的协议选择。默认关闭。HTTPS 的 GET/HEAD 遇到协议异常或内部错误时至多自动尝试一次 HTTP/1.1；只有这次成功才按 origin 在当前进程中记忆 10 分钟，最多保留 128 项。POST 等可能产生副作用的请求不作这种自动重放。`2300999` 仅表示网络内部错误，不足以断定 HTTP/2、DNS 或服务器哪一方有问题。
 
 预算按每次后台函数运行计算，登录、动作按钮、动态选项与脚本分类也适用：
@@ -1345,7 +1441,7 @@ const responses = http.all([
 
 轻页验证页自身最长等待 10 分钟。当前后台会话的网页等待扣时在 `browser.verify` 返回后才累计，等待过程中仍可能先触发 60 秒总时长限制；不要把 10 分钟当成脚本必然可等待的时长。发生超时后，完成验证再重试原操作。
 
-报错时说明阶段和函数，例如“搜索脚本 search：Error: 接口返回错误”。调试页里每个请求、`log` 和返回值摘要都记成一条执行明细。
+报错时说明阶段和函数，例如“搜索脚本 search：Error: 接口返回错误”。调试页里每个请求、`log` 和返回值摘要都记成一条执行明细。QuickJS 阶段记录计算耗时与总耗时，计算超时也显示已用毫秒数，默认 2 秒上限不变。请求明细展示 requestId、传输通道、尝试过程、策略重试次数、传给传输层的请求头和可观测响应头；这不是服务端抓包结果。正文长度按字符数显示，未测量的网络字节数明确标为“未测量”。请求头和响应头中的 Cookie、Authorization、Token 等在写入报告前脱敏。
 
 同一份 `js` 的后台空闲会话会复用（每份代码最多保留 2 个，全部代码合计最多保留 8 个；这是空闲缓存数量，不是并发上限）。全局变量可能随会话保留，但并发时可能使用不同会话；它们与表达式调用的主线程上下文也互不相通。需要跨阶段、跨操作保存的值请用 `vars`、`cache` 或 `keep`。
 
@@ -1391,7 +1487,7 @@ const responses = http.all([
 一个按页合并目录的目录脚本：
 
 ```json
-"js": "function toc(ctx) {\n  const first = http.get('/book/' + ctx.book.vars.bookId + '/toc?page=1').json();\n  let chapters = first.list;\n  const rest = [];\n  for (let p = 2; p <= first.pages; p++) rest.push('/book/' + ctx.book.vars.bookId + '/toc?page=' + p);\n  http.all(rest).forEach(r => { if (r.ok) chapters = chapters.concat(r.json().list); });\n  return chapters.map(c => ({ title: c.name, url: '/chapter/' + c.id, isVip: c.vip == 1 }));\n}",
+"js": "function toc(ctx) {\n  const first = http.get('/book/' + ctx.book.vars.bookId + '/toc?page=1').json();\n  let chapters = first.list;\n  const rest = [];\n  for (let p = 2; p <= first.pages; p++) rest.push('/book/' + ctx.book.vars.bookId + '/toc?page=' + p);\n  http.all(rest, { failOnPartial: true }).forEach(r => { chapters = chapters.concat(r.json().list); });\n  return chapters.map(c => ({ title: c.name, url: '/chapter/' + c.id, isVip: c.vip == 1 }));\n}",
 "toc": { "script": "toc" }
 ```
 
@@ -1708,7 +1804,7 @@ const responses = http.all([
 ## 已知限制
 
 - 编辑页是 JSON 文本编辑，没有按字段拆开的表单。
-- 脚本 `http.*` 的结果里没有响应头；需要 Cookie 时用 `cookie.get` 读取自动保存的值。
+- 脚本 `http.*` 已提供响应头；是否取得由 `headersAvailable` 表示。WebView DOM 与网络失败可能拿不到头，详见[读取响应头与关联请求](#读取响应头与关联请求)。
 - 调试页的执行明细里，列表中只记录第一个元素的各字段结果，其余元素不逐条记录。
 - 声明式 `webView` 可等待指定元素，但没有脚本注入字段；后台脚本需要在网页求值时使用 `browser.render` 的 `js` 选项，等待时间受请求与脚本预算限制。
 - 表单登录后的列表角标：只声明了表单登录、没有网页登录地址的书源，书源列表上不显示“已登录 / 未登录”标记，登录状态要进「书源设置」看。
@@ -3060,18 +3156,24 @@ https://img.example/page.jpg,{"headers":{"Referer":"https://example.com/"}}
 
 ### 单书源调试
 
-书源管理页的操作菜单提供“调试”，书源编辑页在填写有效的 `bookSourceUrl` 后也可以直接进入调试页。调试页支持以下阶段：
+书源管理页的操作菜单提供“调试”，书源编辑页在填写有效的 `bookSourceUrl` 后也可以直接进入调试页。轻页当前从书源管理进入时默认运行全链路，没有阶段切换按钮；入口携带阶段参数时按该阶段执行。下列是阶段含义，不是要求在页面中寻找同名选项：
 
 - **搜索**：输入测试关键词，执行当前书源的搜索请求和列表字段解析。
 - **发现**：输入可选关键词，使用第一个发现分类执行列表解析。
 - **详情**：输入书籍或详情 URL，检查 `ruleBookInfo` 字段和 `tocUrl`。
-- **目录**：输入书籍或目录 URL，最多抽样 32 章，检查章节名和章节地址。
+- **目录**：输入书籍或目录 URL，默认取前 32 章；开启“目录检查：最多 3000 章”后提高本次检查上限，检查章节名和章节地址。
 - **正文**：输入章节 URL，检查正文规则返回的内容。
 - **全链路**：从搜索或发现取得候选书，再依次执行详情、目录和首章正文。
 
-执行明细会记录网络请求的最终地址、状态码、响应大小和摘要，以及每个字段的规则类型、输入数、匹配数、耗时、输出预览和错误。调试信息只用于当前诊断会话，不改变书源规则；调试阶段仍使用应用的正常请求、Cookie、登录和 ArkWeb 路由，因此不能替代真实账号状态下的最终验收。正文阶段的输入是章节 URL，详情和目录阶段的输入应是书源能够处理的书籍/目录 URL。
+目录检查开关适用于目录和全链路调试，重新进入页面时默认关闭；测 600、1000、3000 章时都需确认已开启。报告中的 `chapterCount` 是实际返回数量，`chapterLimit` 是本轮检查上限。脚本即使处理了 3000 条输入，关闭开关时后续也可能只返回 32 章，不能把这时的阶段耗时当作完整目录耗时。该开关是调试工具选项，不是书源 JSON 字段，也不改变正常阅读的目录上限。
 
-调试完成后可点击“导出报告”，通过系统文件选择器保存 JSON 诊断文件。报告包含执行阶段、网络轨迹、规则匹配和错误信息；导出时会对来源地址等字段执行脱敏处理，但规则内容和响应摘要仍可能包含站点或个人敏感信息，提交前应人工检查并删除 Cookie、Token、账号及其他私密数据。
+执行明细记录 `requestId`、传输通道、尝试过程、策略重试次数、传给传输层的请求头、可观测响应头、最终地址和状态码；是否有响应头看 `headersAvailable`。`responseChars` 表示正文字符数，`responseBytes=-1` 表示未测量线路字节数。请求参数明细不能证明头实际到达服务器，需要受控回显服务核对。
+
+规则明细保留类型、输入数、匹配数、耗时、输出预览和错误；原生脚本 `timing` 记录计算耗时、脚本总耗时及网页交互等待。目录步骤 `elapsedMs` 还包括返回结果的字段解析等处理，不等于脚本 CPU 时间，也不能用来代表目录滚动帧率。调试仍使用正常请求、Cookie、登录和 ArkWeb 路由，不能替代真实账号状态下的最终验收。
+
+调试完成后可“复制调试内容”，或通过“导出报告”保存 JSON 文件。两种报告都在完整 `session` 前增加 `summary`，包含会话编号、状态、各阶段耗时、目录数量/检查上限和脚本 timing，便于从长报告中先看到关键数据。摘要只列前 8 个步骤、每步前 2 条脚本 timing；完整细节继续保留在 `session`。
+
+Cookie、Authorization、Token 等请求/响应头在写入诊断报告前脱敏，导出时还处理来源地址等字段。规则文本和正文预览仍可能含业务数据，分享前按内容检查；不要把调试脱敏误解为脚本运行时拿不到真实响应头。
 
 当出现“请求成功但字段为空”时，先查看对应字段的匹配数和输出预览；当出现地址未解析、目录为空或正文为空时，按网络请求 → URL 规则 → 字段规则的顺序检查。调试日志中若出现 401/403、验证码或登录页，应先完成书源登录/网页验证，再重新运行对应阶段。
 
