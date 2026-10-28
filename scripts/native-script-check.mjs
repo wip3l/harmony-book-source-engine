@@ -61,12 +61,12 @@ function scriptHost(respond) {
   host.browserAnswer = { body: '<html>验证后的页面</html>', error: '' };
   host.toast = (message) => { host.ui.toasts.push(message); };
   host.refreshExplore = async () => { host.ui.refreshed++; };
-  host.openBrowser = async (url, title, wait) => {
-    host.ui.opened.push({ url, title, wait });
+  host.openBrowser = async (url, title, wait, userAgent) => {
+    host.ui.opened.push({ url, title, wait, userAgent });
     if (wait) await sleep(30);
     return wait ? host.browserAnswer : { body: '', error: '' };
   };
-  host.requestVerification = (url, title) => { host.ui.verifications.push({ url, title }); };
+  host.requestVerification = (url, title, userAgent) => { host.ui.verifications.push({ url, title, userAgent }); };
   return host;
 }
 
@@ -429,6 +429,7 @@ try {
   });
   host = scriptHost(async (request) => (request.url.includes('/spa') ? 'SPA 标题' : null));
   const uiDetail = await new NativeSourceRunner(uiSource, host, {}).detail(book);
+  equal(host.ui.opened[0].userAgent, 'UA-test', '验证页沿用有效 UA');
   equal(uiDetail.name, '19:SPA 标题', '详情（交互场景）里 browser.verify 拿回页面，browser.render 返回注入表达式的结果');
   equal(host.ui.toasts, ['详情来了'], 'ui.toast');
   equal(host.ui.opened.map((o) => [o.url, o.wait]), [['https://api.example.com/verify', true],
@@ -628,7 +629,20 @@ try {
     [['a', 'b'], ['a', 'b'], ['local'], 'undefined', 'ReferenceError', 'string', 'function', 'function'],
     '后台脚本的 native、方法、局部绑定、全局探测、捕获异常和宿主 API 保持原样');
 
-  console.log(`Native script stage check passed: ${assertions} assertions.`);
+
+{
+  const uaSource = define({...base, headers:{'user-agent':'{{vars.ua}}'}, vars:[{key:'ua',label:'UA',default:'dynamic-UA'}],
+    js:'function search(ctx){browser.verify("/verify","test",{userAgent:"request-UA"});return [];}', search:{script:'search'}});
+  const h = scriptHost(respond);
+  equal(await new NativeSourceRunner(uaSource,h,{}).effectiveUserAgent(), 'dynamic-UA', '设置页使用同一模板 UA 求值');
+  await rejects(new NativeSourceRunner(uaSource,h,{}).search('a',1), /需要网页验证/, '显式请求 UA 的验证仍不自动弹窗');
+  equal(h.ui.verifications[0].userAgent,'request-UA','单请求 UA 随验证传递');
+  uaSource.js='function search(ctx){browser.verify("/verify","test",{userAgent:"bad\\nUA"});return [];}';
+  await rejects(new NativeSourceRunner(uaSource,scriptHost(respond),{}).search('a',1), /userAgent/, '拒绝含换行的 UA');
+}
+console.log('Web verification UA checks passed.');
+
+console.log(`Native script stage check passed: ${assertions} assertions.`);
 } finally {
   mods.cleanup();
 }

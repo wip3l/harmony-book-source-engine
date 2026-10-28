@@ -12,11 +12,23 @@
 | 各宿主的导入限制、安全预算、UI 和缓存 | 由对应宿主的接入文档说明，不作为公共引擎的统一保证 |
 | 封面解密 | 本文 `coverDecode` 字段；宿主还需接入 [SourceCoverLoader](cover-decoding.md)，不能仅靠更新文档或 JSON 获得显示能力 |
 
-本文对应参考宿主 4.4.936 发布构建；此前代码与设备核对记录为 2026-10-26 的本地开发构建，本次文档更新不表示重新执行真机验收。下述新增能力以包含本轮引擎及宿主改动的构建为准，不代表此前发布的所有同版本安装包都已具备。文中的界面、视频播放和调试说明以参考宿主为准，不代表所有宿主都已实现。参考宿主自 4.0.921 起已接入封面解密；其他宿主需确认各自的接入情况。
+本文已对齐 2026-10-29 参考宿主 **4.4.938 本地开发构建**及本工作区引擎代码。网页验证修复已完成 Node 回归、API 26 受控设备测试及应用编译安装；真实 Cloudflare 站点、可信 HTTPS 分区 Cookie 收发及完整页面交互矩阵仍待验收。下述新增能力以包含对应引擎及宿主改动的构建为准，不代表此前发布的所有同版本安装包都已具备。文中的界面、视频播放和调试说明以参考宿主为准，不代表所有宿主都已实现。参考宿主自 4.0.921 起已接入封面解密；其他宿主需确认各自的接入情况。
 
 > 示例只使用 `example.com`、本地测试服务和虚构数据，不发布实际站点书源或登录凭据。
 
-## 本轮原生书源能力更新
+## 网页验证能力更新（2026-10-29）
+
+| 内容 | 新增或变更 | 开发时注意 |
+| --- | --- | --- |
+| 设置页网页抓取 | 参考宿主补齐设置页 WebView，恢复仍可用的页面宿主；销毁页面时取消所属任务 | `http.*({ webView })` 和 `browser.render` 不需要先进入其他页面；宿主切换不重放已发出的 POST |
+| HTTP 结果诊断 | 新增 `statusCodeAvailable`、`errorCode`、`errorStage` | WebView 的兼容 `status=200` 不是网站原始状态码；按字段判断失败阶段 |
+| 验证页 UA | `browser.verify(url, hint?, { userAgent }?)` 可指定本次验证 UA；旧调用兼容 | 默认采用书源已求值 UA；请求单独覆盖 UA 时需显式传入同一值 |
+| 分区 Cookie | API 26 原生请求和脚本 `cookie.get` 纳入目标 URL 的第一方分区 Cookie | 不新增书源 JSON 开关；显式 Cookie 头仍优先；复制操作不读取分区 Cookie |
+| 会话与登录 | 参考宿主区分网页会话、登录判定与用户完成操作 | 有 Cookie 或点“完成”不能证明业务请求成功 |
+
+完整写法见[网页验证与会话诊断](#网页验证与会话诊断)，原有 HTTP、重试与批量请求能力如下。
+
+## 此前原生书源能力更新（2026-10-26）
 
 | 内容 | 新增或变更 | 开发时注意 |
 | --- | --- | --- |
@@ -50,6 +62,7 @@ WebView 加载、`browser.render`、默认 User-Agent、按钮上下文和详情
 - **查某个字段怎么写**：直接看[字段速查](#字段速查)，再跳到对应小节。
 - **导入或校验报错**：看[导入校验与常见报错](#导入校验与常见报错)。
 - **需要多步请求、脚本登录、动态分类**：读[脚本阶段](#脚本阶段-script)，再看[完整脚本示例](#完整脚本示例)、[状态的作用域](#状态的作用域)和[原生脚本排错](#原生脚本排错)。
+- **网页渲染、人机验证或验证后仍失败**：读[网页验证与会话诊断](#网页验证与会话诊断)，分别核对交互阶段、UA、Cookie、业务元素及结构化错误。
 - **把兼容书源改写成原生书源**：先看[从兼容书源改写](#从兼容书源改写)和[与兼容书源的差异](#与兼容书源的差异)。已有的 JavaScript 函数可以直接放进 [JS 函数库](#js-函数库-js)。
 - **维护存量的兼容书源**：读[第二部分](#第二部分兼容书源已过时)，从[快速入门](#快速入门)开始；迁移 Android 阅读书源重点看 [JavaScript 兼容层](#javascript-兼容层)、[登录与网页验证](#登录cookie-与网页验证)和[兼容性与迁移](#兼容性与迁移)。
 - **扩展应用能力**：原生书源从[实现与验证](#实现与验证)、兼容书源从[实现索引](#实现索引)进入对应 ArkTS 模块。
@@ -1253,7 +1266,7 @@ function restoreImage(bytes, ctx) {
 ```
 
 - 用户在「书源设置」里点登录，应用用内置浏览器打开 `url`（必须是完整的 http(s) 地址），登录完成后保存该站点的 Cookie。
-- `cookies` 列出登录后应当存在的 Cookie 名，用来判断登录状态；不写时只要该站点有 Cookie 就算已登录。
+- `cookies` 列出登录后应当存在且非空的 Cookie 名，用来做本地登录判定；存在并不保证服务端仍接受这些凭据。不写且只有普通站点 Cookie 时，参考宿主显示“已保存网页会话（登录状态未确认）”；可配置登录检查进一步核实。网页人机验证 Cookie 与账户登录凭据不能混为一谈。
 - `check` 可选，对应设置页的「检查登录」：请求 `url`，`ok` 为真表示登录有效，`name` 是显示的账号名。
 - 之后对同一站点的请求自动带上 Cookie。要把登录凭据发给另一个域名时，用 `cookie(地址, 名称)` 取值，写进那个请求的 `headers`。
 - 需要支持手动填令牌时，加一个普通变量，规则里写 `default(cookie(…), vars.token)`。
@@ -1414,12 +1427,12 @@ fn sign(path, ts) {
 
 | 接口 | 说明 |
 |---|---|
-| `http.get(地址, 选项?)`、`http.post(地址, 请求体, 选项?)`、`http.request({ url, method, headers, body, charset, retry, webView, timeout })` | 同步发请求，返回 `{ ok, status, body, url, finalUrl, error, headers, headersAvailable, requestId }`，`json()` 解析正文（不是 JSON 时抛错）。相对地址按书源地址补全，也接受 `data:` 地址；请求体是对象时按 JSON 发送并自动加 `Content-Type: application/json`。请求失败不抛错，看 `ok` 和 `status`。`headers` 键名为小写，同名多值用逗号加空格连接，`set-cookie` 多行用换行连接；`headersAvailable` 为 false 时表示未取得响应头（例如 WebView DOM、网络失败），不能据空对象断言服务器没有该头。4xx/5xx 也保留可观测响应头。Cookie 继续自动保存 |
+| `http.get(地址, 选项?)`、`http.post(地址, 请求体, 选项?)`、`http.request({ url, method, headers, body, charset, retry, webView, timeout })` | 同步发请求，返回 `{ ok, status, statusCodeAvailable, body, url, finalUrl, error, errorCode, errorStage, headers, headersAvailable, requestId }`，`json()` 解析正文（不是 JSON 时抛错）。相对地址按书源地址补全，也接受 `data:` 地址；请求体是对象时按 JSON 发送并自动加 `Content-Type: application/json`。请求失败不抛错，看 `ok` 和 `status`。`headers` 键名为小写，同名多值用逗号加空格连接，`set-cookie` 多行用换行连接；`headersAvailable` 为 false 时表示未取得响应头（例如 WebView DOM、网络失败），不能据空对象断言服务器没有该头。4xx/5xx 也保留可观测响应头。Cookie 继续自动保存 |
 | `http.all([请求, …], { concurrency, timeout, failOnPartial }?)` | 按顺序返回。每项可以是地址或请求对象；默认最多 8 个并发，`concurrency` 可设 1–8 的整数，完成一项就补下一项。`timeout` 为每项的默认超时，可由请求对象中的同名字段覆盖。默认返回全部逐项结果；`failOnPartial: true` 在整批完成且任一项失败时抛错，报告成功数、失败数和从 0 开始的失败索引。取消/超预算仍立即报错 |
 | `vars.get(名)`、`vars.set(名, 值)` | 书源变量，写入后保存（和书源设置页是同一份），可以写没有在 `vars` 里声明的键 |
 | `temp.get(名)`、`temp.set(名, 值)` | 当前 `NativeSourceRunner` 实例内的临时值；参考宿主按操作创建运行器，不能依赖它把详情数据传给后续目录操作 |
 | `cache.get(名)`、`cache.put(名, 值, 有效秒数?)` | 内存缓存，按书源分开，有效期默认 600 秒，1 秒到 7 天；重启应用后失效。`cache.set` 是 `put` 的别名 |
-| `cookie.get(地址, 名?)`、`cookie.set(地址, "a=1; b=2")`、`cookie.remove(地址, 名?)` | 读写这个书源的 Cookie；不写名字时读整条、删全部 |
+| `cookie.get(地址, 名?)`、`cookie.set(地址, "a=1; b=2")`、`cookie.remove(地址, 名?)` | 读写这个书源的 Cookie；不写名字时读取或清理目标地址匹配的 Cookie，不是清空应用全部站点。API 26 的 `cookie.get` 包含第一方分区 Cookie；作用域及清理边界见[会话诊断](#网页验证与会话诊断) |
 | `login.token`、`login.user`、`login.save(令牌, 用户名)` | 读取与保存登录凭据（与表单登录同一份） |
 | `keep(名, 值)` | 只在详情阶段：记进书籍变量，之后的阶段通过 `book.vars.名` 读取 |
 | `log(…)` | 写进调试页的执行明细，非文本参数转成 JSON |
@@ -1430,8 +1443,8 @@ fn sign(path, ts) {
 | `page(原文, 地址)` | 见上 |
 | `ui.toast(文字)` | 在应用里弹提示 |
 | `ui.refreshExplore()` | 清掉这个书源的发现页缓存，让发现页重新加载（例如切换线路之后） |
-| `browser.verify(地址, 提示?)` | 打开内置浏览器让用户过验证或登录，用户点「完成」后返回页面 HTML，网页里得到的 Cookie 一并保存；用户返回或取消时抛出“网页操作已取消”。只在用户主动发起的操作里弹出（打开书籍的详情、目录、正文，设置页按钮，登录）；搜索和发现里不弹网页，而是抛出“需要网页验证”，界面上照常出现「去验证」 |
-| `browser.open(地址, 标题?)` | 打开网页，不等结果。搜索和发现里不能用 |
+| `browser.verify(地址, 提示?, { userAgent }?)` | 打开内置浏览器让用户过验证或登录，用户点「完成」后返回页面 HTML，网页里得到的 Cookie 一并保存；用户返回或取消时抛出“网页操作已取消”。只在用户主动发起的操作里弹出（打开书籍的详情、目录、正文，设置页按钮，登录）；搜索和发现里不弹网页，而是抛出“需要网页验证”，界面上照常出现「去验证」 |
+| `browser.open(地址, 标题?)` | 采用书源已求值 UA 打开网页，不等待用户操作结果。搜索和发现里不能用；需要操作完成后继续请求时用 `browser.verify` |
 | `browser.render(地址, { waitFor, timeout, js, headers })` | 在内置浏览器里加载页面（等 `waitFor` 对应的元素出现），在页面里求值 `js` 表达式并返回结果，对象会转成 JSON 文本；不写 `js` 时返回渲染后的整页 HTML。`timeout` 单位为秒，默认 15，范围 3 到 60；`js` 是一个表达式，多条语句需包成立即执行的函数。计入请求次数，失败会抛错 |
 
 脚本里的请求和声明式请求走同一条请求层：书源请求头、Cookie、限流、编码识别和重试都一样，但遇到验证页不会自动提示“去验证”，需要时由脚本调用 `browser.verify`。
@@ -1449,6 +1462,16 @@ const responses = http.all([
 ```
 
 请求结果另外提供 `finalUrl`：宿主实际观测到的重定向最终地址。HarmonyOS API 22 及以上通过网络拦截接口取得；浏览器抓取路径取页面最终地址。旧系统或不支持拦截的传输实现返回空字符串，不能把空值当成“没有重定向”。`url` 保持原有的地址解析基准语义。需要防止章节被跳转到别处时，可在 `finalUrl` 非空时验证它；为空时继续核对正文中的章节标识或 canonical。
+
+请求结果还提供以下诊断字段（旧宿主可能缺省）：
+
+| 字段 | 含义与使用方式 |
+| --- | --- |
+| `statusCodeAvailable` | 为 `true` 才表示取得原始 HTTP 状态。WebView 为 `false`，兼容返回的 `status=200` 仅表示 DOM/表达式抓取成功；`data:` 等非 HTTP 结果也不能当成服务器状态 |
+| `errorCode` | 有结构化分类时返回错误标识；否则为空。适合定位错误，不代表所有网络失败都已有枚举 |
+| `errorStage` | 错误发生阶段，例如 `host`、`queue`、`load`、`selector`、`script`、`deadline`、`cancel`；未分类时为空 |
+
+先检查 `ok`，再检查业务内容；记录错误时保留 `requestId`、`errorCode`、`errorStage` 和 `error`。不要解析错误文案里的数字推断 DNS 或 TCP 故障。具体分类和处理见[网页验证与会话诊断](#网页验证与会话诊断)。
 
 
 ### 读取响应头与关联请求
@@ -1492,6 +1515,92 @@ if (!r.ok) throw new Error(r.requestId + ' HTTP ' + r.status);
 - 没有显式 timeout 时，对象策略仍有最多 60 秒总预算；脚本阶段同时受剩余总预算约束。每轮最多跟随 3 次显式重定向；SDK 内部跳转由平台控制。最多 4 轮、16 次显式 HTTP 调用。取消会中断退避等待。
 
 完整聚合使用 `http.all(list, { failOnPartial: true })`。失败信息包含成功/失败数量、从 0 开始的失败索引、HTTP 状态、请求编号和脱敏地址；不会返回一个伪装成完整结果的成功子集。允许部分结果时保留默认模式，逐项检查 `ok` 并通过 `log` 或合适的界面提示说明缺失页，不能把缺页目录称为完整结果。
+
+### 网页验证与会话诊断
+
+以下说明适用于包含 2026-10-29 修复的引擎与参考宿主。网页加载和人工验证是两种操作：
+
+| 场景 | 网页抓取 | 人工验证与后续动作 |
+| --- | --- | --- |
+| 搜索、发现 | 可显式用 `http.*` 的 `webView` 或 `browser.render` | `browser.verify` 登记验证请求并结束本次阶段；用户点“去验证”、完成操作后重新搜索或加载发现 |
+| 用户主动打开详情、目录、正文 | 可显式抓取 | `browser.verify` 在允许交互的上下文等待用户，点“完成”后继续脚本；取消时抛错 |
+| 设置页动作、登录 | 设置页提供自己的网页宿主 | 可等待验证后继续；还有独立“网页验证”入口，无需为了出现入口而虚构 `login` 配置 |
+| 动态选项、自动任务 | 网页抓取仍需可用宿主 | 不要假定所有后台阶段都允许自动弹网页；需要交互时由用户主动执行相应操作 |
+
+脚本 HTTP 请求保持原有控制流，不会因普通 403 自动打开浏览器。应依据目标站点的明确挑战特征调用 `browser.verify`；不能仅凭正文提到 Cloudflare 或 `ok=true` 判断通过验证。`waitFor` 应选择业务元素，`body` 在挑战页也存在。
+
+#### UA 一致性与搜索示例
+
+`device.ua` 返回当前书源顶层请求头求值后的 UA，未配置时使用宿主默认值。请求头名称按大小写无关的方式合并，本次请求头覆盖顶层同名头。`browser.verify` 省略第三参数时采用书源上下文 UA；若某次 `http.*` 单独覆盖 UA，应把相同值传给验证页。`userAgent` 必须是无换行的字符串，最长 2048 字符；旧二参数写法保持兼容。`browser.open` 和参考宿主设置页的网页入口也使用书源已求值 UA。参考宿主将每次验证的 URL、书源及 UA 绑定，避免后续验证请求覆盖当前页面的上下文。
+
+下面是阶段函数片段，需搭配站点自己的 `search.list/fields`；挑战检测条件也须按站点实际响应调整：
+
+```js
+function search(ctx) {
+  var address = ctx.source.url + '/search?q=' + encodeURIComponent(ctx.key);
+  var ua = device.ua;
+  var r = http.get(address, { headers: { 'User-Agent': ua } });
+  var challenge = (r.headersAvailable && r.headers['cf-mitigated'] === 'challenge') ||
+    (/Just a moment/i.test(r.body) && /cdn-cgi\/challenge-platform/.test(r.body));
+  if (challenge) {
+    browser.verify(address, '请完成网站验证后重新搜索', { userAgent: ua });
+    // 搜索/发现到此结束；用户完成后重新发起，不会在此自动重试。
+  }
+  if (!r.ok) throw new Error(r.error || ('HTTP ' + r.status));
+  return page(r.body, r.url);
+}
+```
+
+设置页需要“验证后继续”时，可将下列函数放进顶层 `js`，并声明 `actions: [{ label: '验证后检查', script: 'verifyAndCheck' }]`。替换 `/account`、`#account-ready` 为站点的业务地址和元素：
+
+```js
+function verifyAndCheck(ctx) {
+  var ua = device.ua;
+  browser.verify('/account', '请完成操作后点右上角完成', { userAgent: ua });
+  var r = http.get('/account', {
+    headers: { 'User-Agent': ua },
+    webView: { waitFor: '#account-ready', timeout: 8 },
+    timeout: 10000
+  });
+  if (!r.ok) throw new Error((r.errorCode || 'REQUEST_FAILED') + ': ' + r.error);
+  if (!native.sel('@css:#account-ready@text', r.body)) throw new Error('未取得预期业务内容');
+  return '已取得预期业务内容';
+}
+```
+
+这里 `webView.timeout` 为秒，外层请求 `timeout` 为毫秒；脚本仍受自身总时长预算约束。也可使用 `browser.render('/account', { waitFor: '#account-ready', timeout: 8, headers: { 'User-Agent': ua } })` 取得 HTML，但它在失败时直接抛错，不返回 HTTP 响应对象。需要读取结构化错误时使用 `http.*` 的 `webView` 选项。
+
+#### Cookie、登录与“完成”
+
+- API 26 的默认 ArkWeb 存储适配器通过 `fetchCookieSync(url, false, true)` 读取目标 URL 的第一方分区 Cookie，用于原生文本/二进制 HTTP 和脚本 `cookie.get`；API 20–25 保留旧读取方式。自定义 `SourceCookieJar` 可提供 `getRequestCookie`，未提供时回退到 `getCookie`。
+- 没有显式 Cookie 头时按现有规则自动使用存储中的匹配 Cookie；显式 Cookie 头仍优先，不自动补齐。通常应让存储负责发送，避免手工拼接旧值覆盖验证后会话。原有跨 origin 去凭据策略不变。
+- Cookie 复制路径仍不读取分区 Cookie；`cf_clearance`、`__cf_bm` 不跨地址复制。不要将挑战 Cookie 搬到镜像域，或把分区 Cookie 当成普通 Cookie 注入网页。
+- `cookie.remove` 清理目标地址的会话，不清空应用全局 Cookie。分区清理包含保留 Partitioned 属性的过期写入和短期墓碑兼容处理；当前设备验证仅覆盖测试域根路径，不能保证所有 Domain/Path 组合都已验收。
+- 参考宿主显示“已保存网页会话（登录状态未确认）”时，仅说明有会话 Cookie；指定登录 Cookie、保存令牌或登录检查有各自的本地判定规则。人机验证成功与账户登录是不同状态。
+- 网页右上角“完成”只确认用户结束操作并保存会话。必须再检查业务请求、业务元素或站点登录接口，才能判断后续操作是否成功。Cookie 可读、可发送、重启后仍存在、被网站接受是不同条件。
+
+#### 错误分类与恢复
+
+网页抓取排队、页面迁移和重试共享截止时间，不会各自重新获得完整预算。参考宿主取消已销毁设置页的所属任务并忽略迟到更新；进入等待中的验证页不算取消。新页面退出后可恢复仍有效的旧宿主；已发出的 POST 或带请求体任务失去宿主时不透明重放。
+
+| `errorCode` | `errorStage` | 处理方向 |
+| --- | --- | --- |
+| `WEB_HOST_UNAVAILABLE` | `host` | 有界等待后仍无网页宿主；回到可用页面再发起，不按网络连接超时处理 |
+| `WEB_HOST_CHANGED` / `WEB_HOST_CLOSED` | `host` | 宿主切换或关闭；先确认操作结果，再由用户重发可能有副作用的请求 |
+| `WEB_QUEUE_TIMEOUT` | `queue` | 尚未轮到执行；减少同时进行的网页抓取，检查总预算 |
+| `WEB_LOAD_TIMEOUT` | `load` | 网页加载未及时完成；核对页面可达性、站点内容及等待条件 |
+| `WEB_WAIT_UNMET` | `selector` | 业务等待条件未满足；检查是否仍是挑战页及选择器是否正确 |
+| `WEB_JS_FAILED` | `script` | 网页表达式失败；核对表达式及页面上下文 |
+| `REQUEST_DEADLINE` | `deadline` | 整个请求总预算用尽；结合宿主等待、排队、渲染耗时定位 |
+| `CANCELLED` | `cancel` | 用户或所属操作取消；停止后续请求，不自动循环重试 |
+
+未分类错误继续看 `error` 和请求轨迹，不能假定错误码集合封闭。`statusCodeAvailable=false` 时不要把 `status` 当成站点状态码；WebView 抓到挑战页也可能返回兼容 `status=200`。参考宿主调试展示宿主等待、排队与渲染耗时；搜索流程另外记录有效条数、去重/精确匹配/上限、相关性过滤及实际纳入展示条数，脚本返回数不必等于界面数。诊断日志不要输出 Cookie、令牌或完整认证头。
+
+#### 已验证范围
+
+已通过 Node 契约回归及参考宿主 API 26 受控设备测试：冷启动抓取连续两次通过，宿主恢复、取消、UA 服务端比对和状态可用性通过；SDK 直接写入的测试 Cookie 证明 HttpOnly 可读、分区 Cookie 默认遗漏、启用分区读取后可见，根路径测试 Cookie 清理通过。这不等于可信 HTTPS 服务端设置/接收 Cookie 的全链路证明。
+
+真实 Cloudflare 站点的人工验证、应用重启后的会话持久化、不同 Cookie 作用域、完整设置页/验证页往返矩阵，以及 API 20–25 真机仍需单独验收。当前实现没有增加无人值守挑战求解、通用 403 回退或无页面常驻 WebView。
 
 ### WebView 与跨阶段上下文
 
