@@ -9,6 +9,7 @@ const root = path.resolve(__dirname, '../sourceengine/src/main/ets');
 const cache = new Map();
 const storage = new Map();
 const stubs = {
+  '@ohos.deviceInfo': {sdkApiVersion: 26},
   '@kit.BasicServicesKit': {deviceInfo: {deviceType: 'phone'}},
   '@kit.ArkTS': {util: {TextEncoder: class {encodeInto(s) {return Buffer.from(s);}},
     Base64Helper: class {encodeToStringSync(a) {return Buffer.from(a).toString('base64');}
