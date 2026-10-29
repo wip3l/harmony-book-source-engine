@@ -49,6 +49,9 @@ export interface NativeLoginState {
 }
 
 export interface NativeResponse {
+  bodyIsSnapshot?: boolean;
+  snapshotTruncated?: boolean;
+  waitStage?: string;
   errorCode?: string;
   errorStage?: string;
   statusCodeAvailable?: boolean;

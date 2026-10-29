@@ -1468,10 +1468,17 @@ const responses = http.all([
 | 字段 | 含义与使用方式 |
 | --- | --- |
 | `statusCodeAvailable` | 为 `true` 才表示取得原始 HTTP 状态。WebView 为 `false`，兼容返回的 `status=200` 仅表示 DOM/表达式抓取成功；`data:` 等非 HTTP 结果也不能当成服务器状态 |
-| `errorCode` | 有结构化分类时返回错误标识；否则为空。适合定位错误，不代表所有网络失败都已有枚举 |
-| `errorStage` | 错误发生阶段，例如 `host`、`queue`、`load`、`selector`、`script`、`deadline`、`cancel`；未分类时为空 |
+| `errorCode` | 成功时为空；失败返回分类或兜底标识 `REQUEST_FAILED`，HTTP 状态失败兜底为 `HTTP_STATUS`。旧宿主未分类时可能为空，不代表所有网络失败都已有细分枚举 |
+| `errorStage` | 错误发生阶段，例如 `host`、`queue`、`load`、`selector`、`script`、`deadline`、`cancel`；未细分为 `unknown`，HTTP 状态失败兜底为 `response` |
+| `waitStage` | 网页请求结束时所处的等待阶段，例如 `session`、`host`、`queue`、`load`、`stability`、`selector`、`script`；与导致结束的 `errorStage` 分开，例如 deadline 时仍在 selector 等待 |
+| `hostWaitMs` / `queueMs` / `renderMs` | 网页宿主等待、运行时排队及加载执行耗时（毫秒）；未取得时为 0。用于诊断，不应相加作为完整请求墙钟时间 |
+| `bodyIsSnapshot` / `snapshotTruncated` | 失败时 body 是否为最近页面快照、快照是否被截断。快照最多 65536 个 UTF-16 单元，仍保持 `ok=false`；不可当作完整业务响应 |
 
 先检查 `ok`，再检查业务内容；记录错误时保留 `requestId`、`errorCode`、`errorStage` 和 `error`。不要解析错误文案里的数字推断 DNS 或 TCP 故障。具体分类和处理见[网页验证与会话诊断](#网页验证与会话诊断)。
+
+以上新增耗时、等待阶段和快照字段以包含 2026-10-29 抓取稳定性修复的宿主为准；不能仅凭相同版本号推定支持。检查字段存在性请用 `Object.prototype.hasOwnProperty.call(r, 'statusCodeAvailable')`，不要把 false 或空字符串当作“字段缺失”。
+
+`browser.render` 成功仍返回字符串；失败仍抛出 Error，包含 `errorCode`、`errorStage`、`waitStage`、`requestId`、三个耗时字段和快照标记；`e.response` 为完整失败响应。错误未被脚本捕获时，文案中也保留分类信息。不要在日志中输出完整快照、Cookie 或认证信息。
 
 
 ### 读取响应头与关联请求
@@ -1600,11 +1607,17 @@ function verifyAndCheck(ctx) {
 
 已通过 Node 契约回归及参考宿主 API 26 受控设备测试：冷启动抓取连续两次通过，宿主恢复、取消、UA 服务端比对和状态可用性通过；SDK 直接写入的测试 Cookie 证明 HttpOnly 可读、分区 Cookie 默认遗漏、启用分区读取后可见，根路径测试 Cookie 清理通过。这不等于可信 HTTPS 服务端设置/接收 Cookie 的全链路证明。
 
+后续 4.4.940 本地开发构建在同一 API 26 设备通过新增受控用例：页面包含 15 秒慢图片及每 30 毫秒变化的 DOM，显式业务选择器在 6 秒预算内抓取成功；不存在的选择器在 3 秒截止时间后返回 selector 等待阶段和失败快照。Node 同时覆盖旧文档隔离、快照上限、原生发现取消及脚本异常字段。该记录不代表真实 CF 站点已经恢复。
+
 真实 Cloudflare 站点的人工验证、应用重启后的会话持久化、不同 Cookie 作用域、完整设置页/验证页往返矩阵，以及 API 20–25 真机仍需单独验收。当前实现没有增加无人值守挑战求解、通用 403 回退或无页面常驻 WebView。
 
 ### WebView 与跨阶段上下文
 
 `webView: true` 或 `webView: { waitFor: '#app', timeout: 15 }` 可用于声明式阶段及 `http.get` 的选项。`browser.render` 可加载页面并求值 JS。搜索/发现也能加载和渲染网页；`browser.verify` 是交互式验证，搜索/发现会提示“去验证”，不自动弹出网页。页面加载不保证交互验证通过。
+
+显式 `waitFor` 在确认是本次导航的新文档后，可于 DOM interactive 阶段开始检查，不要求图片等资源全部加载完成或整页停止变化。无显式条件的普通抓取继续等页面完成及稳定；无法安全区分旧文档时保留该回退。未收到导航开始／结束等必要事件时仍可能超时，`body` 存在不保证本次取页成功。等待超时若已取得当前页面快照，会保留有界快照并标记失败；排队、取消或无可用快照时 body 仍可能为空。
+
+参考宿主的原生发现列表和动态分类传递页面取消信号；切分类、刷新、切离发现及组件销毁时取消所属旧任务，不取消其他页面的网页抓取。
 
 `http` 的 timeout 单位为毫秒；`webView.timeout` 和 `browser.render` 的 timeout 为秒。未写 UA 时原生 HTTP 有宿主默认值。按钮上下文提供 `ctx.source.url`，`ctx.baseUrl` 初始也为书源 URL。详情脚本 `keep('id', value)` 后，目录/正文读 `ctx.book.vars.id`。
 
