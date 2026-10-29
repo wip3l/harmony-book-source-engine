@@ -11,12 +11,6 @@ HarmonyOS（ArkTS）书源解析内核，从[开源轻页（qingye-reader）](ht
 
 内核不包含界面，也不访问应用数据库。搜索、发现、详情/目录/正文的调度由宿主应用实现。目前开源轻页和简听都以本仓库为书源内核。
 
-## 轻页 4.3.929 接入说明
-
-- 原生图片脚本提供 `image.reorderStrips` 横条重排；可解码的乱序图片须声明 `processPlainImages: true`，参数与限制见[书源开发文档](docs/book-source-development.md)。
-- 宿主可选择先获取完整图片标记，再调度逐张下载与处理；完整缓存和导出保留默认物化流程。图片并发、可见页优先级和取消由宿主负责。
-- 轻页新增的漫画本地 OCR、繁→简与主题包分享属于应用功能，不属于书源内核，也未增加翻译字段。接入差异见[轻页宿主文档](https://github.com/wip3l/qingye-reader/blob/main/docs/book-source-development.md)。
-
 ## 文档
 
 | 文档 | 读者 |
@@ -113,16 +107,3 @@ node scripts/image-binary-probe.mjs <OpenHarmony native SDK 路径> <hdc 路径>
 LICENSE 末尾附有一条 GPL-3.0 第 7 条附加许可（Harmony Book AI Engine 链接例外 1.0）：允许本项目与 Harmony Book AI Engine 链接并一起分发，AI 引擎部分不受 GPL 约束。这条例外只针对 Harmony Book AI Engine，不适用于其他库或程序；本项目其余部分仍完全按 GPL-3.0 授权。
 
 第三方组件（ohos_quickjs、QuickJS、部分 Huawei N-API 封装代码）分别遵循 MIT 与 Apache-2.0 许可，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与 [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt)。
-
-## 当前宿主验收
-
-轻页 4.2.925 已接入原生 JS 函数库、后台脚本阶段与 NativeSourceInteraction。宿主应分别验收提示、发现缓存刷新、网页验证、脚本按钮忙碌状态和动态选项；Node 回归不能替代真机网页及 QuickJS 验证。书源格式仍以公共书源规则开发文档为准。
-
-## 4.4.935 接入核对
-
-轻页 4.4.935 纳入原生脚本响应头与请求编号、严格批量请求、条件重试、数字变量以及媒体跳转保护，并修复书列表 JS 字段批处理的对象返回表达式。字段语义与限制见[公共书源开发文档](docs/book-source-development.md)；历史真机验收记录不等同于所有宿主或设备均已验证。
-
-## 4.4.936 接入核对
-
-- 原生视频规则新增可选的 `content.videoPage`，返回当前集的原站播放网页；原生播放失败后的自动或手动回退、网页生命周期及选集操作由宿主接入，不保证绕过格式、登录或站点限制。
-- 原生 JS 调用内置规则函数时使用 `native.函数名(...)`，错误提示补充此调用方式。字段示例和边界见公共书源开发文档。
