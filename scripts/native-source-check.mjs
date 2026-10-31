@@ -769,11 +769,42 @@ try {
   delete responses['/token'];
   await extendedRunner.detail(book);
   equal(extendedHost.requests[extendedHost.requests.length - 1].headers, { 'User-Agent': 'check' }, '取值失败时为 null，值为空的请求头不发送');
+  equal(extendedHost.traces.filter((t) => t.field === 'cache.token.url').map((t) => t.error), ['mock failure'],
+    '缓存请求失败记入调试信息');
+  const brokenCache = JSON.parse(JSON.stringify(extended));
+  brokenCache.cache.token.value = '= data.token + missingName';
+  responses['/token'] = { token: 'T2' };
+  const brokenCacheHost = createTestHost(JsonPathEvaluator, respond);
+  await new NativeSourceRunner(NativeSourceSpec.fromObject(brokenCache), brokenCacheHost, {}).detail(book);
+  equal(brokenCacheHost.requests[brokenCacheHost.requests.length - 1].headers, { 'User-Agent': 'check' },
+    '缓存取值规则出错时值为 null，不中断请求');
+  equal(brokenCacheHost.traces.filter((t) => t.field.startsWith('cache.token')).map((t) => [t.field, t.error]),
+    [['cache.token.value', '未定义的名称 “missingName”']], '缓存取值规则出错记入调试信息，只记一条');
+  delete responses['/token'];
   const comicWithHeaders = await extendedRunner.content({ ...book, type: 'comic' },
     { url: 'https://api.example.com/content?item_id=m1', title: '', index: 0 });
   equal(comicWithHeaders.images.length, 2, '漫画返回图片地址列表');
   equal(comicWithHeaders.mediaHeaders, { Referer: 'https://api.example.com/' }, '媒体请求头按模板渲染');
   invalid((s) => { s.cache = { token: { url: 'x' } }; }, '缓存缺少取值规则');
+
+  // ---------- 调用了没定义的函数：导入时就报错 ----------
+  invalid((s) => { s.search.fields.intro = '= biInfo(item)'; }, '表达式调用未定义的函数');
+  invalid((s) => { s.search.url = '{{server}}/s?k={{sign(key)}}'; }, '模板调用未定义的函数');
+  invalid((s) => { s.lib = 'fn a(x) { return biInfo(x) }'; }, 'lib 调用未定义的函数');
+  const typo = JSON.parse(JSON.stringify(sample));
+  typo.lib = 'fn biRead(x) { return biInfoo(x) }';
+  typo.search.fields.intro = '= biRead(item) + len(chars(str(item)))';
+  equal(NativeSourceSpec.undefinedCalls(typo), [{ path: 'lib 函数 biRead', name: 'biInfoo' }],
+    '列出调用了但没定义的函数及位置，内置函数和 lib 函数不算');
+  let typoMessage = '';
+  try {
+    NativeSourceSpec.fromObject(typo);
+  } catch (e) {
+    typoMessage = e.message;
+  }
+  equal(typoMessage, 'lib 函数 biRead：没有名为 “biInfoo” 的函数，lib 和内置函数里都没有', '报错指明位置和函数名');
+  typo.js = 'function biInfoo(x) { return x; }';
+  equal(NativeSourceSpec.validate(NativeSourceSpec.fromObject(typo)), [], '有 js 时留给导入时到 js 里找');
 
   // ---------- 顶层 headers：每个请求按当前作用域求值，与本次请求的请求头合并 ----------
   const dynamicHeaders = JSON.parse(JSON.stringify(sample));
@@ -978,7 +1009,7 @@ try {
   const fallbackResult = await fallbackRunner().content({ ...book, type: 'video' }, videoChapter, true);
   equal(fallbackResult.videoPage, 'https://api.example.com/watch/c1', '网页地址按响应地址补全');
   equal(fallbackResult.mediaHeaders, { Referer: 'https://example.com/' }, '视频专用结果保留媒体头');
-  fallbackDefinition.content.videoPage = '= missingFunction()';
+  fallbackDefinition.content.videoPage = '= missingName';
   equal((await fallbackRunner().content({ ...book, type: 'video' }, videoChapter, true)).text, played.text,
     '可选网页规则错误不阻断有效直链');
   fallbackDefinition.content.videoPage = '/watch/{{d.item_id}}';
@@ -999,7 +1030,7 @@ try {
   fallbackDefinition.content = { videoPage: '= "https://api.example.com/watch/1"' };
   equal((await fallbackRunner().content({ ...book, type: 'video' }, videoChapter, true)).kind, 'video',
     '支持只提供网页的视频书源');
-  fallbackDefinition.content.video = '= missingFunction()';
+  fallbackDefinition.content.video = '= missingName';
   const brokenDirect = await fallbackRunner().content({ ...book, type: 'video' }, videoChapter, true);
   equal(brokenDirect.videoPage, 'https://api.example.com/watch/1', '直链规则抛错仍保留有效网页');
   equal(!!brokenDirect.mediaError, true, '直链规则抛错保留原因');
@@ -1024,6 +1055,13 @@ try {
   equal(volumeChapters.map((c) => `${c.isVolume ? '#' : ''}${c.title}`),
     ['#第一卷', '第一章', '第二章', '#第二卷', '第三章'], '分卷标题与章节按原顺序输出，分卷不需要地址');
   equal(ev('flatMap([[1, 2], [3]], x => x)'), [1, 2, 3], 'flatMap');
+  equal(ev("chars('书a😀')"), ['书', 'a', '😀'], 'chars 按码点逐字拆开');
+  equal(ev('chars(null)'), [], 'chars 空值得到空列表');
+  const charLoop = new NativeExpr(host).loadLibrary(
+    'fn spell(s) { let m = {"a": "A", "b": "B"} let out = "" for ch in chars(s) { out = out + (m[ch] ?? "?") } return out }' +
+    ' fn whole(s) { let n = 0 for ch in s { n = n + 1 } return n }');
+  equal(charLoop.evaluate("spell('abc')", new NativeScope()), 'AB?', 'for 配合 chars 逐字查表');
+  equal(charLoop.evaluate("whole('abc')", new NativeScope()), 1, 'for 直接遍历字符串仍是一项（不拆字）');
 
   // ---------- 网络错误不当成需要登录 ----------
   const api = 'https://fq.example.org:8443/content?item_id=1,{"headers":{"a":"b"}}';

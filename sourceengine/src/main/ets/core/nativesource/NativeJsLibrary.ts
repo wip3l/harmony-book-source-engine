@@ -45,7 +45,8 @@ export class NativeJsLibrary implements NativeScriptLibrary {
    * 导入时的检查：能否载入，以及函数名是否与内置函数、lib 里的函数重名（重名时表达式不会调到 JS）。
    * 通过时返回空串。
    */
-  static check(code: string, libFunctionNames: string[], scriptFunctions: string[] = []): string {
+  static check(code: string, libFunctionNames: string[], scriptFunctions: string[] = [],
+    expressionCalls: Array<{ path: string, name: string }> = []): string {
     if (code.length > NativeJsPrelude.MAX_CODE_LENGTH) {
       return `js 太长：上限 ${Math.round(NativeJsPrelude.MAX_CODE_LENGTH / 1024)} KB`;
     }
@@ -64,11 +65,19 @@ export class NativeJsLibrary implements NativeScriptLibrary {
         NativeJsLibrary.CALL_TIMEOUT_MS, 0);
       if (!result.success) return `js：${NativeJsPrelude.shortError(result.error)}`;
       const clash = NativeJsPrelude.clashMessage(NativeJsPrelude.parseResult(result.value) as string[], builtins);
-      if (clash || scriptFunctions.length === 0) return clash;
-      const defined = script.context.evaluateBounded(NativeJsPrelude.definedSource(scriptFunctions), 'js-check.js',
+      if (clash) return clash;
+      const calledNames: string[] = [];
+      for (const call of expressionCalls) if (calledNames.indexOf(call.name) < 0) calledNames.push(call.name);
+      const required = scriptFunctions.concat(calledNames.filter((name: string): boolean => scriptFunctions.indexOf(name) < 0));
+      if (required.length === 0) return '';
+      const defined = script.context.evaluateBounded(NativeJsPrelude.definedSource(required), 'js-check.js',
         NativeJsLibrary.CALL_TIMEOUT_MS, 0);
       if (!defined.success) return `js：${NativeJsPrelude.shortError(defined.error)}`;
-      return NativeJsPrelude.missingMessage(scriptFunctions, NativeJsPrelude.parseResult(defined.value) as string[]);
+      const definedNames = NativeJsPrelude.parseResult(defined.value) as string[];
+      const missingScript = NativeJsPrelude.missingMessage(scriptFunctions, definedNames);
+      if (missingScript) return missingScript;
+      const missingCall = expressionCalls.find((call): boolean => definedNames.indexOf(call.name) < 0);
+      return missingCall ? `${missingCall.path}：没有名为 “${missingCall.name}” 的函数，lib、内置函数和 js 里都没有` : '';
     } finally {
       script.context.release();
     }

@@ -441,7 +441,7 @@ export class NativeSourceService {
     const definition = NativeSourceSpec.fromObject(value);
     if (definition.js && definition.js.trim()) {
       const problem = NativeJsLibrary.check(definition.js, NativeExpr.libraryFunctionNames(definition.lib),
-        NativeSourceSpec.scriptFunctions(definition));
+        NativeSourceSpec.scriptFunctions(definition), NativeSourceSpec.undefinedCalls(definition));
       if (problem) throw new Error(problem);
     }
     return NativeSourceService.toBookSource(definition, existing);
