@@ -12,7 +12,7 @@
 | 各宿主的导入限制、安全预算、UI 和缓存 | 由对应宿主的接入文档说明，不作为公共引擎的统一保证 |
 | 封面解密 | 本文 `coverDecode` 字段；宿主还需接入 [SourceCoverLoader](cover-decoding.md)，不能仅靠更新文档或 JSON 获得显示能力 |
 
-当前参考宿主为开源轻页 **4.4.946**，包含 `8709b3f` 的规则实现及后续文档提交，精确依赖以宿主固定的子模块提交为准。本文覆盖 `chars` 码点拆分、声明式函数名导入校验、缓存失败诊断、保存后变量的评论入口指纹及 HTML 文本的 CRLF 归一化。宿主的逐版本变化统一见[开源轻页更新日志](https://github.com/wip3l/qingye-reader/blob/main/CHANGELOG.md)。
+当前参考宿主为开源轻页 **4.4.947**，包含 `867c3db` 的规则实现及后续文档提交，精确依赖以宿主固定的子模块提交为准。本文覆盖 `chars` 码点拆分、声明式函数名导入校验、缓存失败诊断、评论入口的业务状态指纹、离线文档深浅色样式及 HTML 文本的 CRLF 归一化。宿主的逐版本变化统一见[开源轻页更新日志](https://github.com/wip3l/qingye-reader/blob/main/CHANGELOG.md)。
 
 网页验证已有 Node 回归和 API 26 受控设备测试记录；真实 Cloudflare 站点、可信 HTTPS 分区 Cookie 收发及完整页面交互矩阵仍待验收。本文界面、视频播放与调试说明以参考宿主为例；其他宿主需分别确认网页交互、评论页和封面解密等能力的接入，不能仅凭格式版本或文档版本判断支持情况。
 
@@ -1061,6 +1061,21 @@ function restoreImage(bytes, ctx) {
 `page` 是段评，`chapterPage` 是章评。正文加载只准备入口和有界的上下文，不逐段生成 HTML，也不执行页面自己的 `fetch`。点击后，页面规则可以读取正文阶段的变量、`stats`，以及当前段落的 `para.index/count/text`；章评读取 `total`。
 
 **深浅色适配**：参考宿主的阅读器与调试预览会把当前应用配色传给离线 Web；源页面使用 `@media (prefers-color-scheme: dark)` 定义深色下的正文、引用、回复、昵称与辅助文字颜色。外层文档和沙箱 iframe 均声明 `color-scheme: light dark` 并提供默认底色／文字色；书源自己的 CSS 可覆盖。切换主题只改变配色，不重载页面或重新取评论。宿主不强制反色，书源若把背景写死为白色，也需提供对应的深色 CSS。
+
+例如，页面可在现有样式后补充以下配色，并分别检查浅色、深色与切换后的交互状态：
+
+```css
+body { background: #fff; color: #202124; }
+.muted { color: #616161; }
+blockquote { background: #f3f3f3; }
+@media (prefers-color-scheme: dark) {
+  body { background: #18191b; color: #ddd; }
+  .muted { color: #aaa; }
+  blockquote { background: #252629; }
+}
+```
+
+参考宿主不再叠加原生标题，需显示的段评／章评标题和条数在 `html` 中绘制；`title` 仍可保留为页面元信息，不保证每个宿主都自动显示。页面生成失败时显示具体原因；入口过期或段落变化时使用“刷新本章”，刷新后重新点击入口。不要对明确失效的旧入口无限重试。
 
 ```json
 "comments": {
