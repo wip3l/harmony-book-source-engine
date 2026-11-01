@@ -25,6 +25,8 @@ HarmonyOS（ArkTS）书源解析内核，从[开源轻页（qingye-reader）](ht
 
 内联评论页依赖正文上下文与状态指纹。宿主持久化变量后再使用评论入口，真实变量变更需刷新正文；页面生成与 Web 显示应分别验收，详见[内联评论页](docs/book-source-development.md#内联评论页点击后取数和生成-html)与 [HAR 宿主接入](sourceengine/README.md)。参考应用的版本变化统一见[开源轻页更新日志](https://github.com/wip3l/qingye-reader/blob/main/CHANGELOG.md)。
 
+评论页的 HTML 由书源按普通文本声明，编码和离线 Web 的加载时序由宿主处理。宿主应只允许当前生成文档的主框架导航，避免拦截自身文档或被初始空白页覆盖；不要为修复显示问题开放任意 `data:` 页面或远程资源。原生规则格式和内核接口保持不变。
+
 ## 仓库结构
 
 ```text

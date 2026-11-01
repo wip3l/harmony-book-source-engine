@@ -76,6 +76,8 @@ import { QuickJsDiagnostics } from '@legado/sourceengine/Diagnostics';
 
 评论页面生成与离线 Web 显示是两个独立阶段。宿主调试页分别记录生成结果和 Web 加载结果，显示成功后才能标记预览通过；超时、失败和关闭须记录对应状态，并销毁旧 Web、取消过期任务。字段与预算见[内联评论页](../docs/book-source-development.md#内联评论页点击后取数和生成-html)。
 
+ArkWeb 使用初始 `about:blank` 时，先等待该页面结束再调用 `loadData`，避免初始声明式导航取消并覆盖生成文档。参考宿主将完整文档按 UTF-8 转成 Base64 后以 `loadData(encoded, 'text/html', 'base64')` 加载。URL 拦截与资源拦截应使用同一策略，只放行与当前编码文档完全一致的主框架数据导航，保留既有空白页、srcdoc 和内联图片支持；不放行任意 HTML 数据地址、子框架数据页面、远程或文件请求。失败、销毁或重载时清除旧文档授权，并用生成序号阻止旧超时回调影响新页面。
+
 修改接入后运行 `scripts/native-comment-page-check.mjs`；应用侧还需验证生成、显示、取消与重试。Node 替身检查不能证明实际 Web 页面已显示。
 
 ## 宿主兼容性回归
