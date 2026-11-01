@@ -63,6 +63,21 @@ try {
   } finally {Date.now=realNow; Runner.clearCommentContexts(definition.url);}
   await assert.rejects(runner().commentPage(book, {...chapter, url:'/chapter/2'}, action), /失效/);
   await assert.rejects(runner().commentPage({...book, bookUrl:'/book/2'}, chapter, action), /失效/);
+  const progressBook = structuredClone(book);
+  progressBook.vars = { bookId: 'keep-1', nested: { a: 1, b: 2 }, lastReadTime: '1000' };
+  const progressContent = await runner().content(progressBook, chapter);
+  const progressAction = progressContent.paragraphComments[0].url;
+  const clickedBook = structuredClone(progressBook);
+  Object.assign(clickedBook.vars, { readStarted: '1', lastReadTime: '2000', readProgressChapterIndex: '0',
+    readProgressPageCount: '9', readProgressCharOffsetV2: '400', readProgressCharOffsetChapterV2: '0',
+    lastReadPageText: 'current page', lastReadPageImage: '', ttsReadChapterIndex: '0',
+    ttsReadOffsetStart: '400', ttsReadOffsetEnd: '430', nested: { b: 2, a: 1 } });
+  await runner().commentPage(clickedBook, chapter, progressAction);
+  Runner.clearCommentContexts(definition.url);
+  await runner().commentPage(clickedBook, chapter, progressAction);
+  await assert.rejects(runner().commentPage({ ...clickedBook,
+    vars: { ...clickedBook.vars, bookId: 'keep-2' } }, chapter, progressAction), /失效/);
+  await assert.rejects(runner().commentPage({ ...clickedBook, name: 'Other book' }, chapter, progressAction), /失效/);
   await assert.rejects(runner(definition, {server:'changed'}).commentPage(book, chapter, action), /失效/);
   const changed = structuredClone(definition); changed.content.comments.page.html = '<p>changed</p>';
   await assert.rejects(runner(changed).commentPage(book, chapter, action), /失效/);

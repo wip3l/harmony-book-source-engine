@@ -1104,8 +1104,16 @@ export class NativeSourceRunner {
     // 键的先后顺序都不该让刚生成的入口失效。
     const saved = this.savedVars();
     const vars = Object.assign(saved, NativeSourceRunner.resolveVars(this.definition, saved));
+    // 宿主把阅读进度也保存在 book.vars；正文显示、翻页和朗读会更新它们，不能使评论入口失效。
+    // 仅排除明确的进度字段，书源 keep 的业务变量仍参与校验，并保持传给规则的 book 不变。
+    const bookVars: Record<string, NativeValue> = Object.assign({}, book.vars);
+    for (const name of ['readStarted', 'lastReadTime', 'readProgressChapterIndex', 'readProgressPageCount',
+      'readProgressCharOffsetV2', 'readProgressCharOffsetChapterV2', 'lastReadPageText', 'lastReadPageImage',
+      'ttsReadChapterIndex', 'ttsReadOffsetStart', 'ttsReadOffsetEnd']) delete bookVars[name];
+    const bookIdentity = { bookUrl: book.bookUrl, tocUrl: book.tocUrl, name: book.name, author: book.author,
+      kind: book.kind, type: book.type, vars: NativeSourceRunner.sortedKeys(bookVars) };
     return this.host.digest('SHA256',
-      JSON.stringify([this.definition, NativeSourceRunner.sortedKeys(vars), this.credential, book, chapter]));
+      JSON.stringify([this.definition, NativeSourceRunner.sortedKeys(vars), this.credential, bookIdentity, chapter]));
   }
 
   /** 对象键按固定顺序重建，数组顺序和值类型不变。 */

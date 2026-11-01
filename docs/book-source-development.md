@@ -1093,6 +1093,8 @@ function restoreImage(bytes, ctx) {
 
 评论入口使用正文脚本保存后的变量计算指纹。补齐默认值、有限数字保存为文本，以及对象键的排列变化不视为变量值改变；真正改动变量值、切换账号或修改书源后仍需刷新正文。升级后已打开的旧章节若提示入口失效，先刷新本章再验证。
 
+宿主保存在 `book.vars` 中的阅读进度不参与评论入口指纹：`readStarted`、`lastReadTime`、`readProgressChapterIndex`、`readProgressPageCount`、`readProgressCharOffsetV2`、`readProgressCharOffsetChapterV2`、`lastReadPageText`、`lastReadPageImage`、`ttsReadChapterIndex`、`ttsReadOffsetStart`、`ttsReadOffsetEnd`。这些值会在正文打开、翻页或朗读时变化；规则仍可读取它们，但不能将它们用作评论上下文的失效信号。其他书籍变量（包括详情 `keep`）仍参与校验，对象键顺序不影响指纹。
+
 同一类入口同时提供页面和 URL 时优先页面；页面为空、超限或取数失败时，可回退到有效的原 HTTP(S) URL，没有 URL 则显示失败原因。取消和过期入口不自动回退。`data:text/html` 不作为旧 URL 的替代协议开放。
 
 格式版本仍为 1，**不代表所有版本 1 宿主都支持内联页面**。为了兼容旧宿主，必须保留可用的 `paragraphUrl/chapterUrl`；只提供 `page/chapterPage` 的书源可能被旧宿主拒绝导入。不要把格式版本改成 2 来检测这个能力。
