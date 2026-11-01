@@ -70,6 +70,14 @@ import { QuickJsDiagnostics } from '@legado/sourceengine/Diagnostics';
 
 `ui.refreshExplore()` 只通知宿主清理该书源发现缓存，列表重载由应用处理；`browser.verify/open` 需要可见网页界面，`browser.render` 则依赖 `WebBookFetchRuntime` 的隐藏网页宿主。原生脚本无法直接访问 ArkUI 或构造任意设置界面。完整接口与预算见[脚本阶段](../docs/book-source-development.md#脚本阶段-script)。
 
+## 内联评论页与状态持久化
+
+正文脚本可能写入变量，评论入口应基于写回后的运行时状态使用。内核按规范化后的变量计算指纹：默认值补齐、数字保存为文本或键顺序变化不视为业务状态变化；变量值、账号、书源定义或章节信息真正改变后，旧入口失效，宿主应提示刷新本章。持久化适配器需保证写回与后续读取一致。
+
+评论页面生成与离线 Web 显示是两个独立阶段。宿主调试页分别记录生成结果和 Web 加载结果，显示成功后才能标记预览通过；超时、失败和关闭须记录对应状态，并销毁旧 Web、取消过期任务。字段与预算见[内联评论页](../docs/book-source-development.md#内联评论页点击后取数和生成-html)。
+
+修改接入后运行 `scripts/native-comment-page-check.mjs`；应用侧还需验证生成、显示、取消与重试。Node 替身检查不能证明实际 Web 页面已显示。
+
 ## 宿主兼容性回归
 
 把 `DEVECO_HOME` 设为 DevEco Studio 的安装目录后执行 `node scripts/source-engine-host-check.cjs`。它覆盖默认串行与注入并发执行、Cookie、持久化、取消和原生书源导入；平台 API 用测试替身，不能代替真机验证。

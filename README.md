@@ -21,6 +21,10 @@ HarmonyOS（ArkTS）书源解析内核，从[开源轻页（qingye-reader）](ht
 
 原生 JS 有两条调用路径：表达式中按名调用 `js` 函数只做纯计算；阶段 `script: "函数名"` 在后台执行，可同步调用 `http`、`vars`、`cache` 等受控接口。它们不受兼容书源的 QuickJS 迁移模式控制。详见 [JS 函数库](docs/book-source-development.md#js-函数库-js)与[脚本阶段](docs/book-source-development.md#脚本阶段-script)。
 
+逐字处理可用表达式 `chars(text)` 或 JS 中的 `native.chars(text)`，按 Unicode 码点拆分。导入校验会检查声明式规则中的未定义函数名；JS 函数体仍需通过调试实际执行。声明式缓存失败保持空值并写入调试记录，排错时检查 `cache.名称.url/value`。
+
+内联评论页依赖正文上下文与状态指纹。宿主持久化变量后再使用评论入口，真实变量变更需刷新正文；页面生成与 Web 显示应分别验收，详见[内联评论页](docs/book-source-development.md#内联评论页点击后取数和生成-html)与 [HAR 宿主接入](sourceengine/README.md)。参考应用的版本变化统一见[开源轻页更新日志](https://github.com/wip3l/qingye-reader/blob/main/CHANGELOG.md)。
+
 ## 仓库结构
 
 ```text
