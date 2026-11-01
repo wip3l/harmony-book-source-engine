@@ -1100,7 +1100,21 @@ export class NativeSourceRunner {
   }
 
   private inlineKey(book: NativeBookInput, chapter: NativeChapterInput): string {
-    return this.host.digest('SHA256', JSON.stringify([this.definition, this.storedVars, this.credential, book, chapter]));
+    // 点击时新建的运行器读的是保存后的变量，这里按同样的解析结果算：默认值补齐、数字存成文本、
+    // 键的先后顺序都不该让刚生成的入口失效。
+    const saved = this.savedVars();
+    const vars = Object.assign(saved, NativeSourceRunner.resolveVars(this.definition, saved));
+    return this.host.digest('SHA256',
+      JSON.stringify([this.definition, NativeSourceRunner.sortedKeys(vars), this.credential, book, chapter]));
+  }
+
+  /** 对象键按固定顺序重建，数组顺序和值类型不变。 */
+  private static sortedKeys(value: NativeValue): NativeValue {
+    if (Array.isArray(value)) return value.map((item: NativeValue): NativeValue => NativeSourceRunner.sortedKeys(item));
+    if (!value || typeof value !== 'object') return value;
+    const result: Record<string, NativeValue> = {};
+    for (const key of Object.keys(value).sort()) result[key] = NativeSourceRunner.sortedKeys(value[key]);
+    return result;
   }
 
   /** Cache contains only bounded chapter context. HTML and page.fetch are always evaluated on a click. */
@@ -1431,7 +1445,7 @@ export class NativeSourceRunner {
     for (const name of Object.keys(this.definition.cache || {}).concat(Object.keys(this.definition.let || {}))) {
       ctx[name] = scope.get(name);
     }
-    ctx['vars'] = Object.assign({}, this.storedVars, this.varValues);
+    ctx['vars'] = this.savedVars();
     ctx['url'] = scope.has('__url') ? NativeExpr.toText(scope.get('__url')) : '';
     ctx['title'] = scope.has('__title') ? NativeExpr.toText(scope.get('__title')) : '';
     ctx['menu'] = scope.has('__menuItem') ? scope.get('__menuItem') : null;
@@ -1460,7 +1474,12 @@ export class NativeSourceRunner {
       this.varValues[key] = value === null || value === undefined ? '' : NativeExpr.toText(value);
     }
     if (!this.host.saveVars) throw new Error('当前环境不支持保存书源变量');
-    await this.host.saveVars(Object.assign({}, this.storedVars, this.varValues));
+    await this.host.saveVars(this.savedVars());
+  }
+
+  /** 交给宿主保存的变量：脚本写入的键保持原值，声明变量取当前文本值。 */
+  private savedVars(): Record<string, NativeValue> {
+    return Object.assign({}, this.storedVars, this.varValues);
   }
 
   private async saveCredential(token: string, user: string): Promise<void> {

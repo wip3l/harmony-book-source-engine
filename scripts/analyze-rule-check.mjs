@@ -129,6 +129,14 @@ try {
     if (!/第一行[\s\S]*第二行“引号”/.test(value)) throw new Error(`跨行属性值取值不对：${rule} => ${JSON.stringify(value)}`);
   }
 
+  // CRLF/CR 站点：先统一行尾，再压缩空行，取文本不能留下 \r 或多出空行。
+  for (const [html, expected] of [['<div id="c">甲\r\n<br/>\r\n<br/>乙</div>', '甲\n\n乙'],
+    ['<div id="c">甲\r<br>\r<br>乙</div>', '甲\n\n乙'], ['<div id="c">甲\n<br>乙</div>', '甲\n\n乙']]) {
+    assertions++;
+    const value = new AnalyzeRule(html, BASE_URL).getString('#c@text');
+    if (value !== expected) throw new Error(`行尾归一化不对：${JSON.stringify(html)} => ${JSON.stringify(value)}`);
+  }
+
   // HTML 目录取字段耗时（参考值，不做断言）。
   const timings = [];
   for (const count of [1000, 8000]) {

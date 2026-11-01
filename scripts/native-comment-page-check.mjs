@@ -128,5 +128,31 @@ try {
   assert.equal(JSON.parse(demoPage.dataJson).count,2);
   assert(Page.document(demoPage).includes('测试本地交互'));
   assert.equal(exampleHost.requests.length,0);
-  console.log('native-comment-page-check: lazy fetch, schema, warm/cold contexts, stale actions, fallback, cancellation, UTF-8 limits and safe injection passed');
+
+  // 正文脚本写变量后，点击时的新运行器读保存值：默认值补齐、数字存成文本、键顺序不同都不能让入口失效，
+  // 保存值真的变了仍要失效。
+  const varCases = [
+    { vars: [{ key: 'mode', default: 'on' }], initial: {}, write: "vars.set('chapterState','42');", opens: true },
+    { vars: [{ key: 'mode', default: 'on' }], initial: { mode: 'on' }, write: "vars.set('chapterState','42');", opens: true },
+    { vars: [{ key: 'limit', default: '1000' }], initial: { limit: '1000' }, write: "vars.set('limit',2000);", opens: true },
+    { vars: [{ key: 'limit', default: '1000' }], initial: { limit: '1000' }, write: "vars.set('limit','2000');", opens: true },
+    { vars: [], initial: { a: '1', b: '2' }, write: '', edit: saved => Object.fromEntries(Object.entries(saved).reverse()), opens: true },
+    { vars: [], initial: { a: { x: 1, y: [1, 2] } }, write: '', edit: () => ({ a: { y: [1, 2], x: 1 } }), opens: true },
+    { vars: [], initial: { a: [1, 2] }, write: '', edit: () => ({ a: [2, 1] }), opens: false },
+    { vars: [{ key: 'limit', default: '1000' }], initial: {}, write: "vars.set('limit',2000);", edit: () => ({ limit: '3000' }), opens: false },
+  ];
+  for (const probe of varCases) {
+    const def = { nativeSource: 1, name: 'Vars', url: 'https://vars.example.com', vars: probe.vars,
+      js: `function body(ctx){${probe.write}return {text:'甲',counts:{0:1}};}`,
+      content: { script: 'body', comments: { counts: '= data.counts', page: { html: '<p>ok</p>' } } } };
+    let saved = structuredClone(probe.initial);
+    const varHost = createTestHost(JsonPathEvaluator, async () => { throw Error('offline'); });
+    varHost.scriptEngine = code => createNodeScriptEngine(mods.NativeJsPrelude, mods.NativeExpr.scriptBuiltinNames(), code);
+    varHost.saveVars = async values => { saved = structuredClone(values); };
+    const varContent = await new Runner(def, varHost, probe.initial).content(book, chapter);
+    if (probe.edit) saved = probe.edit(saved);
+    const opening = new Runner(def, varHost, saved).commentPage(book, chapter, varContent.paragraphComments[0].url);
+    if (probe.opens) await opening; else await assert.rejects(opening, /失效/);
+  }
+  console.log('native-comment-page-check: lazy fetch, schema, warm/cold contexts, stale actions, fallback, cancellation, UTF-8 limits, safe injection and saved-var identity passed');
 } finally { mods.cleanup(); }
