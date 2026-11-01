@@ -1060,6 +1060,8 @@ function restoreImage(bytes, ctx) {
 
 `page` 是段评，`chapterPage` 是章评。正文加载只准备入口和有界的上下文，不逐段生成 HTML，也不执行页面自己的 `fetch`。点击后，页面规则可以读取正文阶段的变量、`stats`，以及当前段落的 `para.index/count/text`；章评读取 `total`。
 
+**深浅色适配**：参考宿主的阅读器与调试预览会把当前应用配色传给离线 Web；源页面使用 `@media (prefers-color-scheme: dark)` 定义深色下的正文、引用、回复、昵称与辅助文字颜色。外层文档和沙箱 iframe 均声明 `color-scheme: light dark` 并提供默认底色／文字色；书源自己的 CSS 可覆盖。切换主题只改变配色，不重载页面或重新取评论。宿主不强制反色，书源若把背景写死为白色，也需提供对应的深色 CSS。
+
 ```json
 "comments": {
   "stats": { "url": "/api/counts?chapter={{chapter.index}}" },
