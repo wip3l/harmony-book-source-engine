@@ -728,7 +728,7 @@ export class NativeSourceRunner {
     return record;
   }
 
-  async toc(book: NativeBookInput, limit: number = 0): Promise<NativeChapterRecord[]> {
+  async toc(book: NativeBookInput, limit: number = 0, requireComplete: boolean = false): Promise<NativeChapterRecord[]> {
     const stage = this.scripted(this.requireStage(this.definition.toc, '目录'), CHAPTER_FIELD_NAMES);
     const chapters: NativeChapterRecord[] = [];
     const visited: Set<string> = new Set();
@@ -745,11 +745,17 @@ export class NativeSourceRunner {
       visited.add(loaded.baseUrl);
       const full = await this.appendTocPage(stage, loaded, chapters, limit, pacer);
       if (this.cancelled()) return [];
-      if (full) break;
+      if (full) {
+        if (requireComplete) throw new Error('目录超过章节数量限制，已保留原书源');
+        break;
+      }
       // 脚本阶段自己处理翻页。
       if (!stage.nextUrl || stage.script) break;
       const pending = (await this.nextUrls(stage.nextUrl, loaded, 'toc.nextUrl')).filter((url: string): boolean => !visited.has(url));
       if (pending.length === 0) break;
+      if (requireComplete && pending.length > MAX_TOC_PAGES - page) {
+        throw new Error('目录超过分页限制，已保留原书源');
+      }
       if (pending.length === 1) {
         nextUrl = pending[0];
         visited.add(nextUrl);
@@ -766,7 +772,10 @@ export class NativeSourceRunner {
         for (const listedPage of pages) {
           const listedFull = await this.appendTocPage(stage, listedPage, chapters, limit, pacer);
           if (this.cancelled()) return [];
-          if (listedFull) return stage.reverse === true ? chapters.reverse() : chapters;
+          if (listedFull) {
+            if (requireComplete) throw new Error('目录超过章节数量限制，已保留原书源');
+            return stage.reverse === true ? chapters.reverse() : chapters;
+          }
         }
       }
       break;

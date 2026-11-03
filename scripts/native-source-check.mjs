@@ -395,6 +395,16 @@ try {
     { server: 'https://api.example.com' }).toc({ ...book, tocUrl: '' });
   equal(linesChapters.map((c) => c.title), ['第1页', '第2页', '第3页'], '多行文本同样视为分页列表');
 
+  // 换源完整目录模式拒绝被上限截断的目录；常规预览仍允许显式限制。
+  await rejectsWith(new NativeSourceRunner(NativeSourceSpec.fromObject(paged), pagedHost,
+    { server: 'https://api.example.com' }).toc({ ...book, tocUrl: '' }, 1, true), /章节数量限制/,
+    '换源不得提交截断的目录');
+  const oversized = JSON.parse(JSON.stringify(paged));
+  oversized.toc.nextUrl = "= map(range(1001), i => '/pages?p=' + (i + 2))";
+  await rejectsWith(new NativeSourceRunner(NativeSourceSpec.fromObject(oversized), pagedHost,
+    { server: 'https://api.example.com' }).toc({ ...book, tocUrl: '' }, 0, true), /分页限制/,
+    '换源不得静默裁掉超限分页');
+
   // toc.batch：书源自己定每批并发页数。
   paged.toc.nextUrl = "= data.data.total ? map(range(data.data.total), i => '/pages?p=' + (i + 1)) : data.data.next";
   paged.toc.batch = 8;
