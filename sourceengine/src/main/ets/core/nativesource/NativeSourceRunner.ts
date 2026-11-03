@@ -1108,7 +1108,7 @@ export class NativeSourceRunner {
     // 仅排除明确的进度字段，书源 keep 的业务变量仍参与校验，并保持传给规则的 book 不变。
     const bookVars: Record<string, NativeValue> = Object.assign({}, book.vars);
     for (const name of ['readStarted', 'lastReadTime', 'readProgressChapterIndex', 'readProgressPageCount',
-      'readProgressCharOffsetV2', 'readProgressCharOffsetChapterV2', 'lastReadPageText', 'lastReadPageImage',
+      'readProgressCharOffsetV2', 'readProgressCharOffsetChapterV2', 'readProgressScrollAnchorV1', 'lastReadPageText', 'lastReadPageImage',
       'ttsReadChapterIndex', 'ttsReadOffsetStart', 'ttsReadOffsetEnd']) delete bookVars[name];
     const bookIdentity = { bookUrl: book.bookUrl, tocUrl: book.tocUrl, name: book.name, author: book.author,
       kind: book.kind, type: book.type, vars: NativeSourceRunner.sortedKeys(bookVars) };

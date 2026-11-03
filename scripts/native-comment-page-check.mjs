@@ -70,6 +70,7 @@ try {
   const clickedBook = structuredClone(progressBook);
   Object.assign(clickedBook.vars, { readStarted: '1', lastReadTime: '2000', readProgressChapterIndex: '0',
     readProgressPageCount: '9', readProgressCharOffsetV2: '400', readProgressCharOffsetChapterV2: '0',
+    readProgressScrollAnchorV1: '{"version":1,"offset":400}',
     lastReadPageText: 'current page', lastReadPageImage: '', ttsReadChapterIndex: '0',
     ttsReadOffsetStart: '400', ttsReadOffsetEnd: '430', nested: { b: 2, a: 1 } });
   await runner().commentPage(clickedBook, chapter, progressAction);
