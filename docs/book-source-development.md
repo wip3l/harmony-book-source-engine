@@ -618,7 +618,7 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 **固定分类 `menus`**
 
 - 没有 `url` 的条目是分组标题，之后的分类显示在这个标题下面；`when` 为假时该条目隐藏。
-- `title`、`url` 是模板，打开分类时才渲染 `url`，所以里面可以用 `page`。
+- `title`、`url` 是模板，也可以写 `=` 开头的表达式；`url` 都是打开分类时才求值，所以里面可以用 `page` 和 `vars`。
 - 条目可以带 `headers`，只在打开这个分类时附加，适合个人书架这类需要登录凭据的分类。
 - 条目可以带自己的 `method`、`body`，不写时沿用 `explore` 上的；`body` 写空串表示这个分类不带请求体。这样一个书源可以同时对接 GET 和 POST 接口，例如 `{ "title": "筛选", "url": "{{server}}/filter", "method": "POST", "body": "= tojson({page: page, sort: 'hot'})" }`。
 - 条目可以带自己的 `list`、`fields`，分别回退到 `explore` 的同名配置。设置 `fields` 时整组替换，不逐字段合并，仍须包含 `name`、`bookUrl`。例如 `{ "title": "VIP", "url": "/api/home", "list": "$.data.vipList[*]", "fields": { "name": "$.title", "bookUrl": "$.url" } }`。所有可点击分类都写了完整规则时，可以省略 `explore` 上的 `list`、`fields`；动态分类仍使用 `explore` 上的规则。
