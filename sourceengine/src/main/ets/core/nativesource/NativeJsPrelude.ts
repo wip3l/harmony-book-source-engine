@@ -132,7 +132,8 @@ ${script ? NativeJsPrelude.SCRIPT_API : NativeJsPrelude.EXPRESSION_STUBS}
   define('sleep', function (ms) { call('@sleep', [Number(ms) || 0]); });
   define('ui', Object.freeze({
     toast: function (message) { call('@toast', [message === undefined || message === null ? '' : String(message)]); },
-    refreshExplore: function () { call('@refreshExplore', []); }
+    refreshExplore: function () { call('@refreshExplore', []); },
+    emitSearch: function (value) { call('@emitSearch', [value === undefined ? null : value]); }
   }));
   define('browser', Object.freeze({
     verify: function (url, hint, options) {

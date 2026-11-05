@@ -761,11 +761,16 @@ export class NativeSourceService {
     };
   }
 
+  /** onPartial：搜索脚本每调用一次 ui.emitSearch 就先交出那批书，不等脚本返回；最终结果仍完整返回。 */
   static async search(source: BookSource, http: HttpClient, keyword: string, cancelled: () => boolean,
     maxResponseBytes: number = 0, debugContext: BookSourceDebugContext | null = null,
-    page: number = 1): Promise<SearchBook[]> {
-    const records = await NativeSourceService.runner(source, http, cancelled, maxResponseBytes, debugContext)
-      .search(keyword, page);
+    page: number = 1, onPartial: ((books: SearchBook[]) => void) | null = null): Promise<SearchBook[]> {
+    const runner = NativeSourceService.runner(source, http, cancelled, maxResponseBytes, debugContext);
+    if (onPartial) {
+      runner.setPartialSearchListener((batch: NativeBookRecord[]): void => onPartial(batch.map(
+        (record: NativeBookRecord): SearchBook => NativeSourceService.toSearchBook(source, record))));
+    }
+    const records = await runner.search(keyword, page);
     return records.map((record: NativeBookRecord): SearchBook => NativeSourceService.toSearchBook(source, record));
   }
 

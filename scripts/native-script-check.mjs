@@ -391,6 +391,42 @@ try {
     [{ 'User-Agent': 'UA-甲', 'X-Line': '甲', accept: 'application/json' }, 'UA-甲'],
     '脚本请求合并求值后的顶层请求头，device.ua 用求值后的 User-Agent');
 
+  // ---------- 分批返回：ui.emitSearch 每批先交给宿主，最终返回值照常完整解析 ----------
+  const emitSource = define({
+    ...base,
+    js: `
+      function search(ctx) {
+        var all = [];
+        ['a', 'b'].forEach(function (site) {
+          var found = http.get('/site-' + site + '?q=' + ctx.key).json();
+          ui.emitSearch(found);
+          all = all.concat(found);
+        });
+        return all;
+      }
+      function detail(ctx) { ui.emitSearch([]); return {}; }
+    `,
+    search: { script: 'search', fields: { name: '$.n', bookUrl: '$.u' } },
+    detail: { script: 'detail' },
+  });
+  const siteRespond = async (request) => {
+    const site = request.url.includes('/site-a') ? 'a' : 'b';
+    return [{ n: site === 'a' ? '甲书' : '乙书', u: '/' + site + '/1' }];
+  };
+  host = scriptHost(siteRespond);
+  const batches = [];
+  const emitted = await new NativeSourceRunner(emitSource, host, {})
+    .setPartialSearchListener((books) => batches.push(books.map((b) => b.name)))
+    .search('x', 1);
+  equal(batches, [['甲书'], ['乙书']], 'ui.emitSearch 每批按 search 的 fields 解析后先交给监听者');
+  equal(emitted.map((b) => [b.name, b.bookUrl]), [['甲书', 'https://api.example.com/a/1'], ['乙书', 'https://api.example.com/b/1']],
+    '最终返回值仍完整解析');
+  const silent = [];
+  await new NativeSourceRunner(emitSource, scriptHost(siteRespond), {}).search('x', 1);
+  equal(silent, [], '没有监听者时 ui.emitSearch 不报错也不影响搜索');
+  await rejects(new NativeSourceRunner(emitSource, scriptHost(siteRespond), {}).detail(book), /只能在搜索阶段使用/,
+    '其他阶段不能 ui.emitSearch');
+
   // ---------- 阶段 3：提示、刷新、网页、按钮、动态选项、脚本登录 ----------
   const uiSource = define({
     ...base,
