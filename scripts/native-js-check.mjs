@@ -63,6 +63,11 @@ try {
   for (const message of ["ReferenceError: 'split' is not defined", 'ReferenceError: split is not defined']) {
     equal(formatError(message), message + hint, 'QuickJS 和 Node 未定义错误都带修正提示');
   }
+  for (const message of ["ReferenceError: 'book' is not defined", 'ReferenceError: chapter is not defined']) {
+    const name = message.includes('book') ? 'book' : 'chapter';
+    equal(formatError(message), `${message}；${name} 不是全局变量：阶段脚本里用 ctx.${name}，表达式调用的函数请把它作为参数传入`,
+      '规则里的上下文名在 js 里提示从 ctx 读');
+  }
   const withStack = "ReferenceError: 'split' is not defined\n    at f (js:2)\n    at <eval> (js:f:1)\n    at hidden";
   equal(formatError(withStack), NativeJsPrelude.shortError(withStack) + hint, '保留原错误和调用位置，提示不被堆栈截断');
   for (const message of [

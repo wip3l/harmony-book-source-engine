@@ -17,11 +17,13 @@ export class NativeImageScriptRunner {
   private static queue: number[] = [];
   private static active: boolean = false;
 
-  static program(js: string, fn: string, context: NativeImageScriptContext): string {
-    if (!/^[A-Za-z_$][\w$]*$/.test(fn)) throw new Error('content.imageDecode.script 必须是 JS 函数名');
+  /** label 是报错里写的字段名：正文漫画是 content.imageDecode，封面是 coverDecode。 */
+  static program(js: string, fn: string, context: NativeImageScriptContext,
+    label: string = 'content.imageDecode'): string {
+    if (!/^[A-Za-z_$][\w$]*$/.test(fn)) throw new Error(`${label}.script 必须是 JS 函数名`);
     const json = JSON.stringify(context);
-    if (json.length > 32768) throw new Error('content.imageDecode 脚本上下文过大');
-    if (!js || js.length > 256 * 1024) throw new Error('content.imageDecode.script 需要 js 函数库（最多 256K 字符）');
+    if (json.length > 32768) throw new Error(`${label} 脚本上下文过大`);
+    if (!js || js.length > 256 * 1024) throw new Error(`${label}.script 需要 js 函数库（最多 256K 字符）`);
     // Capture bridge and input before evaluating the untrusted function library.
     return `(function(input,ctx,host){
       "use strict";
@@ -35,14 +37,14 @@ export class NativeImageScriptRunner {
         reorderStrips:(data,options)=>new Uint8Array(host("reorderStrips",data,JSON.stringify(options)))
       });
       ${js}
-      if(typeof ${fn}!=="function") throw new Error("content.imageDecode.script: function missing");
+      if(typeof ${fn}!=="function") throw new Error(${JSON.stringify(`${label}.script: function missing`)});
       return ${fn}(input,ctx);
     })(new Uint8Array(__imageInput),${json},__imageHost)`;
   }
 
   static async run(js: string, fn: string, input: Uint8Array, context: NativeImageScriptContext,
-    cancelled: () => boolean = (): boolean => false): Promise<Uint8Array> {
-    const code = this.program(js, fn, context);
+    cancelled: () => boolean = (): boolean => false, label: string = 'content.imageDecode'): Promise<Uint8Array> {
+    const code = this.program(js, fn, context, label);
     if (!input.length || input.length > this.MAX_BYTES) throw new Error('图片脚本输入须为 1 字节至 20 MiB');
     if (cancelled()) throw new Error('书源请求已取消');
     const executor = SourceEngineHost.imageScripts();
@@ -91,7 +93,7 @@ export class NativeImageScriptRunner {
         stopped = cancelled();
         if (expired || stopped) current.cancel();
       }, 25);
-      const result = await session.evaluateBinary(code, input, 'content.imageDecode.js', 2000);
+      const result = await session.evaluateBinary(code, input, `${label}.js`, 2000);
       if (stopped || cancelled()) throw new Error('书源请求已取消');
       if (expired || Date.now() - started >= 10000 || result.timedOut) throw new Error('图片脚本超时');
       if (!result.success) throw new Error(result.error || '图片脚本执行失败');

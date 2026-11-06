@@ -10,6 +10,8 @@
 请勿将编码地址直接交给系统 Image 或普通预下载器。
 
 `SourceImageDecoder.decode(bytes, spec)` 可独立复用于其他图片入口，`SourceCoverUrl` 无平台依赖。
+`coverDecode.script` 由加载器交给 `NativeImageScriptRunner`，与正文漫画的 `content.imageDecode.script` 共用图片专用沙箱
+（不开放网络、存储和登录接口）；宿主装了 `SourceEngineHost.imageScripts` 执行器时走该执行器。
 该实现不包含网站域名、网站密钥或网站专用选择器。其他宿主需要完成上述加载接入才可显示加密封面。
 
 回归：`node --experimental-strip-types scripts/source-cover-check.mjs`。

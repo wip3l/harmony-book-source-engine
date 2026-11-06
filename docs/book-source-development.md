@@ -1140,7 +1140,7 @@ blockquote { background: #f3f3f3; }
 | `rate` | 限流。`次数/毫秒` 表示窗口内最多几次，例如 `"20/60000"`；纯数字是两次请求的最小间隔毫秒数，例如 `"1000"`。对整个书源的所有请求生效，并发抓目录页也要排队；纯数字间隔会让 N 页目录至少耗时 N × 间隔，站点不限流时不要写。搜索时单个请求最多排队 60 秒 |
 | `headers` | 每个请求都带的请求头，值可以是模板或表达式，每次请求时求值，见[请求是怎么发出的](#请求是怎么发出的)。书源记录的 `header` 字段只保存其中的字面值，供应用的其他功能（如听书播放）使用 |
 | `coverHeaders` | 封面专用请求头，见[加密封面](#加密封面-coverdecode) |
-| `coverDecode` | 封面 AES 解密声明，见[加密封面](#加密封面-coverdecode) |
+| `coverDecode` | 封面解密声明（AES 参数或 `js` 里的脚本函数），见[加密封面](#加密封面-coverdecode) |
 | `vars` | 书源变量，见下 |
 | `let` | 全局派生值，按书写顺序求值，每次操作开始时计算一次，所有阶段都能用 |
 | `cache` | 先取一次、之后复用的值，见下 |
@@ -1169,7 +1169,7 @@ blockquote { background: #f3f3f3; }
 }
 ```
 
-以上是顶层字段片段，需与 `sourceFormat`、`name`、`url` 和阶段规则组成完整定义。加密参数只接收字面值，不计算表达式或执行 JavaScript。
+以上是顶层字段片段，需与 `sourceFormat`、`name`、`url` 和阶段规则组成完整定义。加密参数只接收字面值，不计算表达式；AES 描述不了的格式改用下面的脚本形式。
 
 | 字段 | 语义 |
 | --- | --- |
@@ -1180,6 +1180,18 @@ blockquote { background: #f3f3f3; }
 | `iv` | 固定 IV 的 32 位十六进制写法；不能与 `ivPrefixBytes:16` 同时使用 |
 
 固定 IV 示例：`"iv": "000102030405060708090a0b0c0d0e0f"`，此时删除 `ivPrefixBytes`。
+
+**脚本解密**：首字节异或、自定义文件头这类格式写 `script`（顶层 `js` 里的函数名），与正文漫画的 [`content.imageDecode.script`](#正文的附加请求与评论) 是同一个沙箱、同一套 `image.*` 接口和预算：
+
+```json
+"js": "function decodeCover(bytes, ctx) { const key = bytes[0]; const out = new Uint8Array(bytes.length - 1); for (let i = 1; i < bytes.length; i++) out[i - 1] = bytes[i] ^ key; return out; }",
+"coverDecode": { "script": "decodeCover" }
+```
+
+- 函数签名 `decodeCover(bytes, ctx)`，返回值要求与 `content.imageDecode.script` 相同；`ctx.url` 是封面地址，`ctx.index` 恒为 0，`ctx.params` 是 `params` 的字面对象（封面在列表里加载，不在任何阶段的作用域里，所以不求值表达式）。
+- 下载到的已经是可识别的图片时不运行脚本，同一规则下普通封面和加密封面可以混用。
+- 脚本出错或返回的不是图片时，这张封面加载失败，错误里带 `coverDecode.script` 和函数名。
+- `script`、`params` 与 `algorithm`、`key`、`iv`、`keyEncoding`、`ivPrefixBytes` 互斥；导入时检查函数在 `js` 里存在。
 图片地址仍由 `fields.coverUrl` 提取；HTML 延迟加载图片可使用 `img@data-src`，JSON 则使用对应字段规则。
 正文漫画的 `content.imageDecode` 也支持 `ivPrefixBytes:16` 和显式 `keyEncoding`，但它的 key/iv 按表达式求值，不能直接套用封面裸写十六进制的写法：IV 是 16 个字符的文本时写 `"iv": "= '97b60394abc2fbe1'"`（按 UTF-8 取字节），是十六进制时写 `"iv": "= hexBytes('3937…')"`。详见[正文](#正文的附加请求与评论)小节。
 
@@ -1417,7 +1429,7 @@ fn sign(path, ts) {
 
 - 引擎是 QuickJS，支持较新的语法：`class`（含私有字段）、箭头函数、解构、正则命名分组、`replaceAll`、`BigInt` 等。
 - JS 里通过 `native.名称(…)` 使用内置函数，例如 `native.md5(text)`、`native.sel('@css:.title@text', html)`、`native.decrypt(…)`。除 `map`、`flatMap`、`filter`、`find` 外的内置函数都能用；这四个请改用数组自带的方法。`native.sel`、`native.selAll` 不传内容时，取发起调用的那条规则当前的 `item`。写错名字时报“native.xxx 不是可用的内置函数”。
-- 若在 JS 中写 `function parts(text) { return split(text, ','); }`，应改为 `function parts(text) { return native.split(text, ','); }`。裸用内置函数名触发未定义错误时，顶层代码载入、表达式调用和阶段脚本执行都会保留原错误及位置摘要，并提示“若要调用原生书源内置函数，请使用 native.split(...)”。导入检查不会静态分析未执行的函数体；函数中的错误仍需执行到该处才会暴露。字符串方法 `text.split(',')`、自己定义的局部变量和参数不受影响；`uuid()`、阶段脚本的 `log(...)` 等宿主 API 仍按各自文档使用。
+- 若在 JS 中写 `function parts(text) { return split(text, ','); }`，应改为 `function parts(text) { return native.split(text, ','); }`。裸用内置函数名触发未定义错误时，顶层代码载入、表达式调用和阶段脚本执行都会保留原错误及位置摘要，并提示“若要调用原生书源内置函数，请使用 native.split(...)”。同样，规则里能直接用的 `book`、`chapter`、`key`、`page`、`source`、`baseUrl` 等在 `js` 里不是全局变量：阶段脚本从 `ctx.book` 等读取，表达式调用的函数由调用方作为参数传入；裸用时报错会附上这条提示。导入检查不会静态分析未执行的函数体；函数中的错误仍需执行到该处才会暴露。字符串方法 `text.split(',')`、自己定义的局部变量和参数不受影响；`uuid()`、阶段脚本的 `log(...)` 等宿主 API 仍按各自文档使用。
 - `uuid()` 返回随机 UUID，在 `js` 函数里可以直接调用（表达式本身没有 `uuid`，需要时写一个 `js` 函数返回它）。
 - 参数和返回值按 JSON 传递：字符串、数字、布尔、`null`、数组、对象都可以；字节数据和内置函数一样用 0 到 255 的数字列表。`undefined` 会变成 `null`，函数和 `BigInt` 传不出来。
 - 查找顺序是 `lib` 函数、内置函数、`js` 函数。导入时会检查重名：`js` 里的函数不能与内置函数或 `lib` 函数同名。`lib` 函数里也可以调用 `js` 函数。
@@ -1924,6 +1936,7 @@ const titles = cards.map(card => native.sel('@css:.title@text', card));
 | content.comments 需要 paragraphUrl、chapterUrl、page 或 chapterPage / 使用 paragraphUrl/page 时需要 counts | 评论入口的必填项；旧宿主不支持 page-only |
 | content.imageDecode … | 见[图片解密](#正文的附加请求与评论)，报错里写明了哪个字段 |
 | coverDecode 需要 AES/CBC/PKCS7Padding、16/24/32 字节的 key，以及 iv 或 ivPrefixBytes:16 | 封面解密参数不完整或密钥长度不对 |
+| coverDecode.script 不能与 algorithm/key/iv/keyEncoding/ivPrefixBytes 混用 | 脚本解密和 AES 参数只能选一种 |
 
 运行时出错时，错误信息指出是哪条规则，例如“规则 search.fields.kind 出错：未定义的名称 “x””，调试页里对应的记录也会标出来。常见运行时问题：
 

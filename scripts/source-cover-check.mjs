@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import vm from 'node:vm';
 import { loadNativeSourceModules, createTestHost } from './lib/load-native-source-modules.mjs';
 
 const mods = await loadNativeSourceModules();
@@ -64,6 +65,17 @@ try {
     'utf8 length counts bytes, not characters');
   assert.equal(Spec.validate({ ...definition, coverDecode: { ...spec, key: '\ud800'.repeat(16) } }).length, 1,
     'lone surrogates do not throw');
+  // coverDecode.script: a js function instead of AES fields; the two forms are exclusive and the function must exist.
+  const xorJs = 'function decodeCover(bytes, ctx) { const k = bytes[0]; const out = new Uint8Array(bytes.length - 1);' +
+    ' for (let i = 1; i < bytes.length; i++) out[i - 1] = bytes[i] ^ k; return out; }';
+  const scripted = { ...definition, js: xorJs, coverDecode: { script: 'decodeCover' } };
+  assert.deepEqual(Spec.validate(scripted), []);
+  assert.deepEqual(Spec.validate({ ...scripted, coverDecode: { script: 'decodeCover', params: { a: 1 } } }), []);
+  assert.match(Spec.validate({ ...scripted, coverDecode: { script: 'decodeCover', key } }).join(), /coverDecode.script 不能与/);
+  assert.match(Spec.validate({ ...scripted, coverDecode: { script: 'decodeCover', params: [1] } }).join(), /params 必须是对象/);
+  assert.match(Spec.validate({ ...definition, coverDecode: { ...spec, params: {} } }).join(), /params 需要 script/);
+  assert.match(Spec.validate({ ...definition, coverDecode: { script: 'decodeCover' } }).join(), /coverDecode.script 需要在 js 里定义函数/);
+  assert.ok(Spec.scriptRefs(scripted).some((ref) => ref.path === 'coverDecode.script' && ref.fn === 'decodeCover'));
   const host = createTestHost(JsonPathEvaluator, () => [{ name: 'test', url: '/book', cover: 'https://cdn.example.com/a.webp' }]);
   const runner = new Runner(definition, host);
   const books = await runner.search('test', 1);
@@ -79,11 +91,27 @@ try {
   assert.equal(urls.source(urls.wrap('https://cdn.example.com/a#old', definition.url)), definition.url);
   assert.throws(() => urls.source('https://cdn.example.com/a#source-cover-v1=%'));
   // Exercise the actual loader with only HTTP/crypto platform boundaries replaced.
-  globalThis.__coverLoaderCheck = { NativeSourceSpec: Spec, SourceCoverUrl: urls, SourceImageDecoder: decoder };
+  // The image script runner's real program() is evaluated in node:vm in place of the QuickJS session.
+  const runnerSource = fs.readFileSync(new URL('../sourceengine/src/main/ets/core/nativesource/NativeImageScriptRunner.ts', import.meta.url), 'utf8')
+    .replace(/^import .*;\r?\n/gm, '');
+  const runnerFile = path.join(dir, 'image-runner.ts');
+  fs.writeFileSync(runnerFile, runnerSource);
+  const { NativeImageScriptRunner: imageRunner } = await import(pathToFileURL(runnerFile));
+  const scriptRuns = [];
+  const ImageRunner = {
+    async run(js, fn, input, context, cancelled, label) {
+      scriptRuns.push({ fn, context, label });
+      const code = imageRunner.program(js, fn, context, label);
+      return new Uint8Array(vm.runInNewContext(code, { __imageInput: input, __imageHost: () => { throw new Error('no host'); },
+        Uint8Array, JSON }));
+    }
+  };
+  globalThis.__coverLoaderCheck = { NativeSourceSpec: Spec, SourceCoverUrl: urls, SourceImageDecoder: decoder,
+    NativeImageScriptRunner: ImageRunner };
   const loaderFile = path.join(dir, 'loader.ts');
   const loaderSource = fs.readFileSync(new URL('../sourceengine/src/main/ets/core/nativesource/SourceCoverLoader.ts', import.meta.url), 'utf8')
     .replace(/^import .*;\r?\n/gm, '');
-  fs.writeFileSync(loaderFile, 'const { NativeSourceSpec, SourceCoverUrl, SourceImageDecoder } = globalThis.__coverLoaderCheck;\n' + loaderSource);
+  fs.writeFileSync(loaderFile, 'const { NativeSourceSpec, SourceCoverUrl, SourceImageDecoder, NativeImageScriptRunner } = globalThis.__coverLoaderCheck;\n' + loaderSource);
   const { SourceCoverLoader: loader } = await import(pathToFileURL(loaderFile));
   const raw = urls.wrap('https://cdn.example.com/a.png', definition.url, {'Accept-Language':'en-US',Referer:'https://example.com/'});
   const requests = [];
@@ -108,6 +136,24 @@ try {
   binary=new Uint8Array();
   await assert.rejects(loader.load(http,source,raw),/byte length/);
   await assert.rejects(loader.load({executeBinary:async()=>({success:false})},source,raw),/download failed/);
+  // Script covers: obfuscated bytes go through the js function, plain images skip it, bad output is reported.
+  const xorKey = 0x0d;
+  const obfuscated = Buffer.concat([Buffer.from([xorKey]), Buffer.from(png.map((b) => b ^ xorKey))]);
+  source.jsLib = Spec.pack({ ...scripted, coverDecode: { script: 'decodeCover', params: { tag: 'x' } } });
+  binary = obfuscated;
+  assert.deepEqual(Buffer.from(await loader.load(http, source, raw)), png, 'xor-obfuscated cover decoded by script');
+  assert.deepEqual(scriptRuns.at(-1), { fn: 'decodeCover', context: { url: 'https://cdn.example.com/a.png', index: 0,
+    params: { tag: 'x' } }, label: 'coverDecode' });
+  binary = png;
+  const runsBefore = scriptRuns.length;
+  assert.deepEqual(Buffer.from(await loader.load(http, source, raw)), png, 'plain covers skip the script');
+  assert.equal(scriptRuns.length, runsBefore);
+  binary = Buffer.from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+  await assert.rejects(loader.load(http, source, raw), /coverDecode.script \(decodeCover\)：返回的字节不是支持的图片格式/);
+  source.jsLib = Spec.pack({ ...scripted, js: 'function decodeCover() { throw new Error("坏了"); }' });
+  await assert.rejects(loader.load(http, source, raw), /coverDecode.script \(decodeCover\)：坏了/);
+  source.jsLib = Spec.pack({ ...scripted, js: 'function other() {}' });
+  await assert.rejects(loader.load(http, source, raw), /coverDecode.script: function missing/);
   delete globalThis.__coverLoaderCheck;
-  console.log('source-cover-check: AES prefix/fixed IV, bounds, malformed parameters and search/explore/detail passed');
+  console.log('source-cover-check: AES prefix/fixed IV, script covers, bounds, malformed parameters and search/explore/detail passed');
 } finally { mods.cleanup(); fs.rmSync(dir, { recursive: true, force: true }); }
