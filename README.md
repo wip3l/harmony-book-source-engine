@@ -63,7 +63,7 @@ harmony-book-source-engine/
 }
 ```
 
-**方式二：预编译 HAR。** 按下面的方法编译出 `sourceengine.har` 和 `quickjs.har`，放进应用工程后用 `file:` 引用这两个文件。注意子入口 `@legado/sourceengine/Diagnostics`（QuickJS 诊断）目前没有打进 HAR 的对外声明，需要它时请用源码模块。
+**方式二：预编译 HAR。** 按下面的方法编译出 `sourceengine.har` 和 `quickjs.har`，放进应用工程后用 `file:` 引用这两个文件。
 
 宿主需要接入的部分（运行时状态持久化、ArkWeb 宿主组件、Context、网页验证）和可选宿主端口见 [sourceengine/README.md](sourceengine/README.md)。
 
