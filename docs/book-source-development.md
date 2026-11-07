@@ -2121,7 +2121,7 @@ Node 回归的宿主只支持 JSONPath，不验证 CSS/XPath、真机 QuickJS、
 | 轻量 JavaScript 兼容引擎 | 正式执行且结果有效 | 常见表达式、Android/Java 别名及已映射的 `java/source/book/cache/cookie` 主机函数。 |
 | 分阶段 ArkWeb | 按能力路由正式执行 | 搜索、发现、详情、目录、正文和登录中的复杂 ECMAScript，以及受控异步主机桥。 |
 | 隐藏 ArkWeb 请求传输 | 仅在 URL 显式配置时执行 | `webView: true` 的 HTTP(S) GET/POST 页面加载、DOM 返回及 `webJs`（含返回 Promise 的异步脚本）。 |
-| 原生 QuickJS | 默认 `SHADOW`，支持灰度 | 启动自检后持久化比对无副作用短纯表达式；合格指纹可灰度接管，异常自动回退和熔断。 |
+| 原生 QuickJS | 正式执行 | 轻量兼容引擎替换掉已知主机调用后剩下的纯 JavaScript（方法链、三元、比较等）在沙箱中求值，失败时沿用轻量引擎结果；原生书源的 `js` / `script`。 |
 
 因此，“已经接入 QuickJS”不表示所有书源 JavaScript 都由 QuickJS 执行，也不表示选择器或 WebView 规则需要改写成 JavaScript。网络、Cookie、持久化、DOM 和应用对象仍必须经过对应的受控主机桥。
 
@@ -2895,7 +2895,7 @@ $.data<js>result.items</js>$.books[*]
 
 1. **轻量规则/JavaScript 兼容引擎**：正式处理模板、简单表达式和常见 Android/Java 别名，当前返回值直接参与书源执行；
 2. **分阶段 ArkWeb 引擎**：能力路由器发现箭头函数、模板字符串、`try`、数组高阶函数、`Set/Map`、解构、位运算、类型化数组或较大脚本时，仅将相应阶段交给 ArkWeb 的真实 JavaScript 引擎；
-3. **QuickJS 迁移运行时**：应用启动后先做原生自检，再在 TaskPool 中执行可证明无主机副作用的短纯表达式。默认 `SHADOW` 只比较结果；`CANARY` 仅接管累计至少 4 次一致且零差异、零失败的表达式指纹；`PREFER_QUICKJS` 对候选表达式优先使用 QuickJS。正式模式均保留原执行路径作为失败回退，连续 3 次路由失败会熔断 5 分钟。
+3. **QuickJS 沙箱**：轻量引擎替换掉已知主机调用后剩下的纯 JavaScript 交给沙箱 QuickJS 求值，不开放任何主机能力，求值失败时沿用轻量引擎的结果。
 
 搜索、发现、详情、目录和正文分别路由，启用某一阶段的 ArkWeb 不会把所有书源或所有阶段一起改道。无副作用的失败可以回退轻量引擎；含网络、Cookie 或持久化写入的动作会避免双重执行。`jsLib` 中声明的顶层函数会暴露给当前阶段规则，并在下一书源执行前清理，防止跨源污染。
 
@@ -2915,17 +2915,13 @@ $.data<js>result.items</js>$.books[*]
 
 摘要可使用已覆盖的 `java.md5Encode`、SHA 系列、Base64/Hex 和 AES 等主机函数，也可以用位运算自行实现。算法、密钥和设备标识始终属于书源自身，应用不提供按站点命名的签名接口，也不保证通过目标服务的反自动化校验；请只对已获授权访问的接口使用。
 
-#### QuickJS 迁移与回归测试
+#### QuickJS 沙箱求值
 
-QuickJS 候选当前限制为最多 4096 字符、最多 64 个绑定和 128 KiB 绑定数据，并使用 16 MiB 内存、512 KiB 栈及 10～250 ms 的受限执行。JSON 安全的对象和数组会保持结构化绑定，因此纯表达式可读取 `$.field` 或数组下标；绑定转换另有 32 层、20000 节点保护。包含赋值、语句块、循环、函数/类声明、`new`、`Date`、随机数，或 `java/source/book/chapter/cookie/fetch/webView` 等主机对象的表达式不会进入 QuickJS。迁移诊断只持久化不可逆表达式指纹、计数和耗时，不保存书源代码、变量或解析结果。
-
-可在“其他设置 → 脚本引擎迁移 → 书源脚本回归测试”中多选书源与搜索、发现、详情、目录、正文阶段。该工具只抽取符合上述安全边界的 `{{…}}`、独立 `<js>…</js>`、`@js:`/`js:` 纯表达式，以三组固定输入在原有表达式运行时和 TaskPool QuickJS 中分别执行并报告一致、差异或失败；它不会请求书源网站，也不会读取或修改 Cookie、登录信息、书源变量或迁移统计。异步纯脚本由统一异步路由提交，仍保留原执行结果作为失败回退。单次最多加载 50 个书源并测试 300 个候选表达式。
-
-离线一致不会直接授权 QuickJS 接管。报告会保存候选的书源、阶段、字段和不可逆指纹，但不保存脚本、运行绑定或结果值。当前已接入异步路由的独立纯脚本会进入“待真实验证”；`{{…}}` URL/字段模板及 `@js:` 后处理表达式仍标记为“仅离线通过”，在对应同步解析链路完成异步化前不会被错误晋级。点击“开始真实验证”后，应用切回 `SHADOW`，用户照常搜索、浏览发现或阅读；命中的可路由候选使用真实上下文在 TaskPool 中后台比对，旧引擎结果始终生效。每个候选累计至少 4 次真实一致且零差异、零失败后才显示“灰度合格”，此时页面才允许开启 `CANARY`。真实差异或失败会阻止该候选晋级；清除迁移统计也会同步清除真实验证进度。该流程是渐进迁移门禁，仍不能代替书源功能、网络与登录流程的人工验收。
+轻量 JavaScript 兼容引擎先把 `java.*`、`cookie.getCookie`、`source.get/put` 等已知调用替换成值，剩下的纯 JavaScript（如 `String(x).replace(/…/,'')`、三元和比较）交给沙箱 QuickJS 求值。沙箱限制为最多 4096 字符、最多 64 个绑定和 128 KiB 绑定数据，并使用 16 MiB 内存、512 KiB 栈及 10～250 ms 的受限执行；含语句块、循环、`eval`/`Function`/`new` 或残留 `java/cookie/cache/chapter` 调用的片段不会进入沙箱。求值失败时沿用轻量引擎的结果。
 
 复杂脚本的网络、Cookie、密码学和持久化动作采用引擎无关的“动作请求 → 原生统一执行 → 结果回放”协议，并由执行日志去重。请求仍通过通用 `AnalyzeUrl/HttpClient`，Cookie 仍按目标域隔离；QuickJS 不直接获得这些宿主能力，也不存在按站点名称开放的专用接口。
 
-QuickJS 不能直接替代 JSONPath/CSS/XPath：选择器需要解析 HTML/JSON 节点和维护“当前元素”上下文，而 QuickJS 影子运行时故意不开放 DOM、网络、Cookie、文件或平台对象。需要这些能力时，应继续使用原生选择器、受控主机函数或分阶段 ArkWeb，而不是把规则整体转写为 JavaScript。
+QuickJS 不能直接替代 JSONPath/CSS/XPath：选择器需要解析 HTML/JSON 节点和维护“当前元素”上下文，而 QuickJS 沙箱故意不开放 DOM、网络、Cookie、文件或平台对象。需要这些能力时，应继续使用原生选择器、受控主机函数或分阶段 ArkWeb，而不是把规则整体转写为 JavaScript。
 
 #### 已覆盖的主机函数
 
@@ -3527,7 +3523,6 @@ Cookie、Authorization、Token 等请求/响应头在写入诊断报告前脱敏
 | 状态 | 字段/能力 |
 | --- | --- |
 | 通用链已实际使用 | 搜索/发现的列表、书名、作者、封面、简介、分类、状态、最新章节、字数、更新时间、详情 URL；发现两级分组和动态原生筛选；`jsLib` URL 构建和持久化源变量；分阶段 ArkWeb；显式 `webView`/`webJs` 请求；动态登录输入/开关/选择/按钮、同站点 Cookie、幂等 Cookie 重放、浏览器等待；详情 `init`、书籍字段、状态、`updateTime`、目录 URL；目录列表、章节名、章节 URL、下一页、VIP、付费状态、更新时间；正文内容、图片、图片请求头、书源规则内图片解码、漫画模式、下一页、净化正则和 JS；普通书/漫画/有声书类型；书源请求限流。 |
-| 已接入并可安全灰度 | QuickJS 启动自检、持久化纯表达式比对、合格指纹灰度接管、失败回退和熔断；不直接执行主机函数，也不替代选择器或复杂 ArkWeb 脚本。 |
 | 编码数据已实际使用 | 标准 `data:` 文本、Base64 负载，以及带明确 HTTP(S) URL 的通用 `type: "request"` 请求描述。应用不提供平台协议、候选后端或站点专用会话补丁。 |
 | 可导入/编辑，但通用链目前未消费 | 正文 `title`；顶层 `loginCheckJs`（只参与是否需要登录的识别，脚本不执行）、`bookUrlPattern`。 |
 | 通用链已使用，但编辑页没有输入项 | 正文 `sourceRegex`，只能通过导入 JSON 带入。 |
@@ -3692,7 +3687,7 @@ Cookie、Authorization、Token 等请求/响应头在写入诊断报告前脱敏
 - Java 正则方言转换：`sourceengine/src/main/ets/core/rule/JavaRegexCompat.ts`（字符表由 `scripts/generate-java-regex-word-class.mjs` 生成）
 - 带时间预算的净化替换：`sourceengine/src/main/ets/core/rule/BudgetedRegexReplace.ts`、`entry/src/main/ets/core/concurrency/ReaderContentPreprocessor.ets`
 - JS 兼容层：`sourceengine/src/main/ets/core/rule/JsRuntime.ts`
-- QuickJS 迁移运行时：`sourceengine/src/main/ets/core/script/QuickJsScriptRuntime.ts`、`QuickJsAsyncRouter.ts`、`QuickJsMigrationStore.ts`、`QuickJsRuntimeStatus.ts`、`QuickJsShadowExecutor.ets`
+- QuickJS 沙箱求值：`sourceengine/src/main/ets/core/script/QuickJsScriptRuntime.ts`
 - 分阶段运行路由：`sourceengine/src/main/ets/core/book/BookSourceRuntimeRouter.ts`，回归脚本 `scripts/source-script-runtime-check.mjs`
 - 动态 `@js:` 请求头：`sourceengine/src/main/ets/core/book/BookSourceHeaderRuntime.ts`
 - 搜索/发现/详情/目录/正文 ArkWeb：`sourceengine/src/main/ets/core/book/BookSourceStageWebRuntime.ts`

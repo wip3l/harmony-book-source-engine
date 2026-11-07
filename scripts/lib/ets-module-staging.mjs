@@ -13,7 +13,7 @@ export const ETS_ROOTS = [
   path.join(projectRoot, 'sourceengine', 'src', 'main', 'ets'),
 ];
 const PACKAGE_NAME = '@legado/sourceengine';
-const PACKAGE_INDEXES = ['Index.ts', 'Diagnostics.ets'].map((name) => path.join(projectRoot, 'sourceengine', name));
+const PACKAGE_INDEXES = ['Index.ts'].map((name) => path.join(projectRoot, 'sourceengine', name));
 
 /** 相对 ets 根的路径 → 实际文件路径。 */
 export function locateEtsModule(relative) {

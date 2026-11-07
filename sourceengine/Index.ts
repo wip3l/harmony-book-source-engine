@@ -245,53 +245,10 @@ export {
   ScriptEngine
 } from './src/main/ets/core/rule/ScriptEngine';
 export {
-  QuickJsLegacyEvaluator,
-  QuickJsAsyncRouter
-} from './src/main/ets/core/script/QuickJsAsyncRouter';
-export {
-  QuickJsMigrationEvent,
-  QuickJsFingerprintStats,
-  QuickJsMigrationSnapshot,
-  QuickJsMigrationStore
-} from './src/main/ets/core/script/QuickJsMigrationStore';
-export {
-  QuickJsRegressionFixtureRecord,
-  QuickJsRegressionArtifactSnapshot,
-  QuickJsRegressionArtifactStore
-} from './src/main/ets/core/script/QuickJsRegressionArtifacts';
-export {
-  QuickJsRegressionStage,
-  QuickJsRegressionStatus,
-  QuickJsRegressionIssueCategory,
-  QuickJsRegressionCandidate,
-  QuickJsRegressionItemResult,
-  QuickJsRegressionReplayCase,
-  QuickJsRegressionReport,
-  QuickJsRegressionProgress,
-  QuickJsRegressionProgressCallback,
-  QuickJsRegressionRunner
-} from './src/main/ets/core/script/QuickJsRegressionRunner';
-export {
-  QuickJsRuntimeMode,
-  QuickJsObservationContext,
-  QuickJsShadowSubmitter,
-  QuickJsAsyncExecutionResult,
-  QuickJsAsyncSubmitter,
-  QuickJsRuntimeStatus
-} from './src/main/ets/core/script/QuickJsRuntimeStatus';
-export {
   QuickJsExpressionResult,
-  QuickJsScriptRuntime,
-  QuickJsShadowComparator
+  QuickJsScriptRuntime
 } from './src/main/ets/core/script/QuickJsScriptRuntime';
 export { ScriptProbeResult, ScriptThreadProbe } from './src/main/ets/core/script/ScriptThreadProbe';
-export {
-  QuickJsValidationEvent,
-  QuickJsValidationSeed,
-  QuickJsValidationCandidate,
-  QuickJsValidationSnapshot,
-  QuickJsValidationStore
-} from './src/main/ets/core/script/QuickJsValidationStore';
 export {
   Book,
   ReadConfig,

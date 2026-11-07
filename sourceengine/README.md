@@ -21,13 +21,7 @@
 
 `build-profile.json5` 的 `modules` 里还要注册 `sourceengine`。
 
-`Index.ts` 是主入口，只导出 `.ts` 文件，`.ts` 和 `.ets` 都可以从这里导入。`QuickJsDiagnostics` 和 `QuickJsShadowExecutor` 用到了 `@Concurrent`，必须是 `.ets` 文件，所以单独从子入口导入：
-
-```ts
-import { QuickJsDiagnostics } from '@legado/sourceengine/Diagnostics';
-```
-
-新增公开类型时，把它追加到 `Index.ts`（或 `Diagnostics.ets`）对应的文件分组里。
+`Index.ts` 是唯一入口，只导出 `.ts` 文件，`.ts` 和 `.ets` 都可以从这里导入。新增公开类型时，把它追加到 `Index.ts` 对应的文件分组里。
 
 ## 宿主应用需要接入的部分
 
@@ -43,10 +37,9 @@ import { QuickJsDiagnostics } from '@legado/sourceengine/Diagnostics';
 | --- | --- |
 | 书源运行时状态持久化 | 实现 `BookSourceRuntimePersistence`（读取书源、写回 `variable` / `loginHeader` / `loginInfo`），在启动时调用 `BookSourceRuntimeStore.install(...)`。不安装时读到 `null`，写入被跳过。 |
 | ArkWeb 宿主 | `BookSourceStageWebRuntime.get().attach(controller)`、`WebBookFetchRuntime` 需要页面里挂一个 `Web` 组件提供控制器；参考开源轻页的 [`BookSourceStageRuntimeHost.ets`](https://github.com/wip3l/qingye-reader/blob/main/entry/src/main/ets/components/BookSourceStageRuntimeHost.ets)、[`WebBookFetchRuntimeHost.ets`](https://github.com/wip3l/qingye-reader/blob/main/entry/src/main/ets/components/WebBookFetchRuntimeHost.ets)。 |
-| Context | `TlsTrustStore.load(context)`、`QuickJsDiagnostics.initialize(context)` 等 Preferences 存储需要传入应用上下文。 |
+| Context | `TlsTrustStore.load(context)` 等 Preferences 存储需要传入应用上下文。 |
 | 网页验证 | 遇到验证页时 `VerificationSupport` 写入 AppStorage：`pendingVerificationUrl`、`pendingVerificationTitle`、`pendingVerificationTime`、`pendingVerificationSourceUrl`、`pendingVerificationLoginUrl`。宿主的验证页读取这些值。 |
 | 原生脚本界面交互 | 启动时调用 `NativeSourceInteraction.setHandler(handler)`，实现 `toast`、`refreshExplore`、`openBrowser`。`openBrowser(request, true)` 应等待用户点“完成”并返回 `{ body, error }`，取消时返回错误；网页 Cookie 需按书源保存。轻页实现见 `AppSourceInteraction.ets`。 |
-| QuickJS 诊断刷新 | 存储变化时更新 AppStorage 的 `quickJsMigrationRevision`、`quickJsValidationRevision`、`quickJsRegressionArtifactRevision`，界面可以监听这些值来刷新。 |
 
 ## 可选宿主端口
 
