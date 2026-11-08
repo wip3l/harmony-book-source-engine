@@ -26,6 +26,15 @@
 
 本项目修改过的相关文件继续保留原始版权和许可证头；修改内容主要包括 QuickJS 运行时适配、句柄安全、受限执行和 HarmonyOS 应用集成。
 
+## acorn
+
+- 组件：acorn JavaScript 解析器（压缩后内置于 `sourceengine/src/main/ets/core/book/StageScriptParserSource.ts`，由 `scripts/generate-stage-script-parser.mjs` 生成）
+- 上游项目：https://github.com/acornjs/acorn
+- 许可证：MIT
+- 版权所有：Copyright (C) 2012-2022 by various contributors
+
+用于在分阶段运行时里解析兼容书源脚本，使脚本返回值与 Android 端 Rhino 一致。
+
 ## 完整许可文本
 
 MIT 与 Apache-2.0 的完整许可文本见 [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt)。

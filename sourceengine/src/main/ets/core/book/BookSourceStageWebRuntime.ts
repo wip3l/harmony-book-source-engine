@@ -13,6 +13,7 @@ import { BookSourceExecutionJournal, BookSourceHostActionKind } from './BookSour
 import { BookSourceDebugContext } from './BookSourceDebugModels';
 import { SourceScriptNotice } from './SourceScriptNotice';
 import { SourceEngineHost } from '../host/SourceEngineHost';
+import { StageScriptCompletion } from './StageScriptCompletion';
 
 export class StageWebRuntimeRequest {
   source: BookSource = new BookSource();
@@ -29,6 +30,11 @@ export class StageWebRuntimeRequest {
   maxTotalResponseBytes: number = 16 * 1024 * 1024;
   maxInputBytes: number = 20 * 1024 * 1024;
   maxRequestCount: number = 12;
+  /**
+   * Use Rhino's script value when ArkWeb's completion value is `undefined` (see StageScriptCompletion).
+   * Callers that send a generated wrapper whose own value is always explicit can turn it off.
+   */
+  rhinoCompletion: boolean = true;
   stage: string = SourceRuntimeStage.URL;
   ownerId: string = '';
   debugContext: BookSourceDebugContext | null = null;
@@ -501,11 +507,12 @@ export class BookSourceStageWebRuntime {
     // that is the runaway pattern the request guard exists to stop. Distinct legitimate
     // requests (a source fetching several categories/tabs) are bounded separately.
     const issuedSpecs: Record<string, number> = {};
+    const stageCode = await this.prepareStageCode(request);
     for (let stepIndex = 0; stepIndex < 20; stepIndex++) {
       this.ensureNotCancelled(request);
       const timingId = SourceEngineHost.id(request.source);
       const buildStartedAt = Date.now();
-      const script = this.buildScript(request, responses, stringResults, cookies, cacheState,
+      const script = this.buildScript(request, stageCode, responses, stringResults, cookies, cacheState,
         fixedNow, randomSeed, journal.responseHeaders);
       if (timingId > 0) SourceEngineHost.end(timingId, 'stage-script-build', buildStartedAt, `replay=${stepIndex}`);
       const raw = await this.runJavaScript(script, request.source.bookSourceUrl, timingId);
@@ -1047,7 +1054,32 @@ export class BookSourceStageWebRuntime {
     }
   }
 
-  private buildScript(request: StageWebRuntimeRequest, responses: Record<string, string>,
+  /**
+   * Normalizes the stage code and, when it may rely on Rhino's script value, wraps its expression
+   * statements once per distinct script (parsed inside the Web host, then cached). A parse failure
+   * keeps the original code; a host failure is not cached so the next run can try again.
+   */
+  private async prepareStageCode(request: StageWebRuntimeRequest): Promise<string> {
+    const code = this.normalizeScript(request.code || '');
+    if (!request.rhinoCompletion || !StageScriptCompletion.isCandidate(code)) return code;
+    const cached = StageScriptCompletion.cached(code);
+    if (cached !== undefined) return cached;
+    let prepared = code;
+    try {
+      const raw = await this.runJavaScript(StageScriptCompletion.locateScript(code),
+        request.source.bookSourceUrl, SourceEngineHost.id(request.source));
+      prepared = StageScriptCompletion.instrument(code, raw);
+    } catch (error) {
+      console.warn('[StageWebRuntime] script value preparation failed, using original code: ' +
+        (error instanceof Error ? error.message : String(error)));
+      return code;
+    }
+    this.ensureNotCancelled(request);
+    StageScriptCompletion.remember(code, prepared);
+    return prepared;
+  }
+
+  private buildScript(request: StageWebRuntimeRequest, stageCode: string, responses: Record<string, string>,
     stringResults: Record<string, string>, cookies: Record<string, string>,
     cacheState: Record<string, string>, fixedNow: number, randomSeed: number,
     responseHeaders: Record<string, string> = {}): string {
@@ -1100,7 +1132,6 @@ export class BookSourceStageWebRuntime {
     });
     const library = this.normalizeScript(request.source.jsLib || '');
     const exposeFunctions = this.functionExposeScript(library);
-    const stageCode = this.normalizeScript(request.code || '');
     const code = `${library}\n${exposeFunctions}\n${stageCode}\n//# sourceURL=book-source-stage.js`;
     const stateBase64 = this.encodeBase64(state);
     const codeBase64 = this.encodeBase64(code);
@@ -1319,7 +1350,9 @@ export class BookSourceStageWebRuntime {
       `globalThis.title=S.chapterTitle||'';Object.keys(bookData).forEach(function(k){` +
       `if(/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k)&&globalThis[k]===undefined)globalThis[k]=bookData[k];});` +
       `Object.keys(S.variables||{}).forEach(function(k){globalThis[k]=S.variables[k];});` +
-      `let evaluated;try{evaluated=(function(){return eval(dec('${codeBase64}'));}).call(globalThis);}` +
+      `${StageScriptCompletion.prelude()}` +
+      `let evaluated;try{evaluated=(function(){return eval(dec('${codeBase64}'));}).call(globalThis);` +
+      `if(evaluated===undefined&&${StageScriptCompletion.STATE}.set)evaluated=${StageScriptCompletion.STATE}.value;}` +
       `catch(e){error=String((e&&e.name?e.name+': ':'')+((e&&e.message)||e||'脚本执行失败')+(e&&e.stack?'\\n'+e.stack:''));}` +
       `function text(v){if(typeof v==='string')return v;if(v===undefined||v===null)return '';try{return JSON.stringify(v);}catch(e){return String(v);}}` +
       `const evaluatedText=text(evaluated);const fallbackText=text(globalThis.result);` +

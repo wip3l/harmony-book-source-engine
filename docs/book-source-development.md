@@ -2950,6 +2950,8 @@ QuickJS 不能直接替代 JSONPath/CSS/XPath：选择器需要解析 HTML/JSON 
 - `StringBuilder`、`HashMap`、`ArrayList` 及常用 Java 字符串/集合方法；
 - 使用 `MessageDigest` 或 `Cipher/SecretKeySpec/IvParameterSpec` 封装的常见摘要、AES、DES/3DES 函数。
 
+阶段脚本的返回值按 Android 端 Rhino 的规则取：脚本里（函数体外）最后执行到的那个表达式的值。ECMAScript 2015 起，结尾是没走进去的 `if`、空循环、`switch`、`try` 时整段结果会变成 `undefined`，所以常见的“前一个分支已经 `JSON.stringify(...)`，结尾再跟一个不成立的 `if`”在 ArkWeb 里会丢掉返回值。分阶段运行时会在脚本第一次执行前用内置的 acorn 解析一次（结果按脚本缓存），记录函数体外每条表达式语句的值；只有 ArkWeb 自身得到 `undefined` 时才改用这个值，本来就有返回值的脚本结果不变。解析不了的 Rhino 专有语法（如 `for each`）按原样执行。
+
 ArkWeb 提供真实 ECMAScript 语义，但**不等于完整 Android、Rhino、Node.js 或无限制浏览器环境**。阶段脚本的网络必须经过 `java.ajax` 等受控桥接；`fetch`、`XMLHttpRequest`、`WebSocket` 会被判定为未托管网络。任意 Java 导入、文件、进程、反射、系统组件和第三方原生库不会自动可用。DOM 主要用于登录面板生成的页面；普通搜索/目录/正文规则不应假定目标网页已在可操作 DOM 中。
 
 `java.getString`/`java.getStringList` 支持完整规则语法（CSS/`class.`/`id.`/`tag.` 选择器、`@text`/`@html`/`@@`、`##` 替换链），由原生规则引擎按“收集规则 → 求值 → 重放脚本”的同一套主机动作机制执行，结果按规则缓存；`$.` 开头的 JSON 路径仍直接取值，不需要重放。若阶段脚本最终没有返回任何内容，应用不会再静默地把它替换成规则输入内容（例如把正文规则变成章节页本身），而是记录警告，并在正文阶段把服务端返回的错误信息（如“仅支持网页端访问”“Token验证失败”）作为正文错误上报。

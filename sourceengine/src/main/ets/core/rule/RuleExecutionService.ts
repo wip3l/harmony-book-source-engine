@@ -232,6 +232,8 @@ this.seedSourceVariables(analyzer.getContext(), request.source, request.contextV
     const capturesIntroInfo = field.name === 'intro' && introInfoDeclaration.test(code);
     const compatibleCode = capturesIntroInfo ?
       code.replace(/\b(?:let|const|var)\s+(?=info\s*=\s*`)/, '') : code;
+    // The wrapper's own value is explicit; the field code runs in a nested eval it does not reach.
+    runtimeRequest.rhinoCompletion = false;
     runtimeRequest.code = `const __fieldItems=JSON.parse(result||'[]');const __fieldCodeTemplate=${JSON.stringify(compatibleCode)};` +
       `const __fieldList=${field.listResult ? 'true' : 'false'};` +
       `JSON.stringify(__fieldItems.map(function(__fieldItem){java.__setContextContent(__fieldItem);` +
@@ -292,6 +294,7 @@ this.seedSourceVariables(analyzer.getContext(), request.source, request.contextV
     runtimeRequest.baseUrl = request.baseUrl || request.source.bookSourceUrl;
     runtimeRequest.variables = request.contextValues;
     runtimeRequest.ownerId = request.ownerId;
+    runtimeRequest.rhinoCompletion = false;
     runtimeRequest.code = `const __postItems=JSON.parse(result||'[]');` +
       `const __postBases=${JSON.stringify(baseValues)};const __postTemplate=${JSON.stringify(code)};` +
       `JSON.stringify(__postItems.map(function(__postItem,__postIndex){java.__setContextContent(__postItem);` +
