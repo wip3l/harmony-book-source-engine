@@ -38,6 +38,7 @@ export class AnalyzeUrl {
   private source: BookSource | null;
   private client: HttpClient;
   private runtimeSourceHeaders: Record<string, string>;
+  private scriptResolvedHeaders: boolean = false;
   private noTimeoutRetry: boolean = false;
   private requestDeadlineAt: number = 0;
   private cancelCheck?: () => boolean;
@@ -69,6 +70,17 @@ export class AnalyzeUrl {
    */
   setStaticSourceHeader(enabled: boolean): AnalyzeUrl {
     this.staticSourceHeader = enabled;
+    return this;
+  }
+
+  /**
+   * The caller is a stage script that already evaluated the source's `@js:` header rule (with the
+   * full jsLib and login state) and passed the result to the constructor. Resolving it again would
+   * queue a header task on the serial stage runtime — the very runtime that is waiting for this
+   * request — and the request would never start.
+   */
+  useScriptResolvedHeaders(): AnalyzeUrl {
+    this.scriptResolvedHeaders = true;
     return this;
   }
 
@@ -514,7 +526,7 @@ export class AnalyzeUrl {
     // A `@js:` header rule may compute dynamic values (Referer/Origin/Cookie from source state).
     // Resolve the complete header map before parsing so those values can join the request; the
     // result is cached per source+variable and still scoped per host in loadSourceHeaders().
-    if (this.source && /^@?js\s*:/i.test((this.source.header || '').trim())) {
+    if (this.source && !this.scriptResolvedHeaders && /^@?js\s*:/i.test((this.source.header || '').trim())) {
       this.runtimeSourceHeaders = await BookSourceHeaderRuntime.resolve(this.source);
     }
     this.parse(urlTemplate);

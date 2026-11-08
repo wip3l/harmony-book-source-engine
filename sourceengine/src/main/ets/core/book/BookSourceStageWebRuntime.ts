@@ -840,6 +840,7 @@ export class BookSourceStageWebRuntime {
       } catch (_) {
       }
       return await new AnalyzeUrl(request.source, client, runtimeHeaders)
+        .useScriptResolvedHeaders()
         .setNoTimeoutRetry(true)
         .fetch(requestUrl, responseLimit, request.debugContext);
     } finally {
