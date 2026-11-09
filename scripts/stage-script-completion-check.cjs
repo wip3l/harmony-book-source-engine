@@ -66,7 +66,15 @@ assert.equal(C.instrument('abc', 'not-json'), 'abc');
 assert.equal(C.instrument('abc', encodeURIComponent('[0,9]')), 'abc', 'out-of-range positions are rejected');
 assert.equal(C.isCandidate('JSON.stringify(x)'), false);
 assert.equal(C.isCandidate(idiom), true);
-console.log('PASS script value rewrite: Rhino idioms, unchanged explicit values, functions/classes/directives, parse failures');
+// A `return` outside every function (accepted by some hosts) runs instead of failing to parse.
+const menu = 'var out = [];\n["a", "b"].forEach(function (x) { out.push(x + "::/" + x); });\nreturn out.join("\\n");';
+assert.throws(() => vm.runInNewContext(menu), /Illegal return/, 'plain ArkWeb rejects it');
+assert.equal(value(menu), 'a::/a\nb::/b');
+assert.equal(value('if (true) return 5;\n"after"'), 5);
+assert.equal(value('if (false) return 5;\n"after"'), 'after', 'no return taken: Rhino value of the rest');
+assert.equal(value('"x"; // trailing comment\nreturn "y" // no newline at end'), 'y');
+assert.ok(!prepare('function f(){ return 1 } f()').startsWith('(function(){'), 'returns inside functions do not wrap');
+console.log('PASS script value rewrite: Rhino idioms, unchanged explicit values, functions/classes/directives, parse failures, top-level return');
 
 async function runtimeCheck() {
   const {BookSource} = load('model/data/Book');
@@ -99,6 +107,24 @@ async function runtimeCheck() {
     'no statement ran: unchanged fallback to the input');
   assert.equal((await runtime.execute(request('wrap([3])'))).value, '{"data":[3]}');
   assert.equal(locateCalls, 2, 'scripts without control statements are not parsed');
+  // Legado symmetric-crypto helpers are answered by the native crypto bridge on the next replay.
+  const {BookSourceLoginCrypto} = load('core/book/BookSourceLoginCrypto');
+  const cryptoRequests = [];
+  BookSourceLoginCrypto.execute = async raw => {
+    cryptoRequests.push(JSON.parse(raw));
+    return JSON.stringify({success: true, value: 'ENC' + cryptoRequests.length});
+  };
+  const crypto = await runtime.execute(request(
+    'var c = java.createSymmetricCrypto("DESede/CBC/PKCS5Padding", "k".repeat(24), "01234567");\n' +
+    'JSON.stringify([c.encryptBase64("a"), java.tripleDESEncodeBase64Str("b", "q".repeat(24), "CBC", "PKCS5Padding", "iv"),\n' +
+    '  java.aesDecodeArgsBase64Str("c", btoa("0123456789abcdef"), "CBC", "PKCS5Padding", btoa("fedcba9876543210"))])'));
+  assert.deepEqual(JSON.parse(crypto.value), ['ENC1', 'ENC2', 'ENC3']);
+  assert.deepEqual(cryptoRequests.map(item => [item.transformation, item.method, item.data]), [
+    ['DESede/CBC/PKCS5Padding', 'encryptBase64', 'a'], ['DESede/CBC/PKCS5Padding', 'encryptBase64', 'b'],
+    ['AES/CBC/PKCS5Padding', 'decryptStr', 'c']]);
+  assert.equal(cryptoRequests[1].key, 'q'.repeat(24));
+  assert.deepEqual(cryptoRequests[2].key, Array.from(Buffer.from('0123456789abcdef')), 'Args variants decode Base64 keys');
   console.log('PASS stage runtime: Rhino value used only when ArkWeb returns undefined, per-script cache, opt-out');
+  console.log('PASS stage runtime crypto: createSymmetricCrypto, tripleDES and AES Args helpers use the native bridge');
 }
 runtimeCheck().catch(error => { console.error(error); process.exitCode = 1; });

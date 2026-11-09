@@ -1167,6 +1167,12 @@ export class BookSourceStageWebRuntime {
       `function hexD(v){try{v=String(v??'').replace(/\\s+/g,'');const a=[];for(let i=0;i<v.length;i+=2)` +
       `a.push(parseInt(v.substring(i,i+2),16));return new TextDecoder().decode(new Uint8Array(a));}catch(e){return '';}}` +
       `function hexE(v){return bytes(v).map(function(x){return Number(x).toString(16).padStart(2,'0');}).join('');}` +
+      `function b64bytes(v){try{const s=atob(String(v??''));const a=[];for(let i=0;i<s.length;i++)a.push(s.charCodeAt(i)&255);` +
+      `return a;}catch(e){return [];}}` +
+      `function symmetricCrypto(t,k,iv){return {` +
+      `encrypt:function(v){return cryptoOp(t,k,iv,'encrypt',v);},encryptStr:function(v){return cryptoOp(t,k,iv,'encryptStr',v);},` +
+      `encryptBase64:function(v){return cryptoOp(t,k,iv,'encryptBase64',v);},encryptHex:function(v){return cryptoOp(t,k,iv,'encryptHex',v);},` +
+      `decrypt:function(v){return cryptoOp(t,k,iv,'decrypt',v);},decryptStr:function(v){return cryptoOp(t,k,iv,'decryptStr',v);}};}` +
       `function cryptoOp(transformation,key,iv,method,data){const request=JSON.stringify({` +
       `transformation:String(transformation??''),key:Array.isArray(key)?key:String(key??''),` +
       `iv:Array.isArray(iv)?iv:String(iv??''),method:method,data:Array.isArray(data)?data:String(data??'')});` +
@@ -1274,7 +1280,9 @@ export class BookSourceStageWebRuntime {
       `if(!v||typeof v!=='object'||Array.isArray(v))return {};const o={};for(const k of Object.keys(v)){` +
       `const x=v[k];if(x!==undefined&&x!==null&&typeof x!=='object')o[String(k)]=String(x);}return o;}` +
       `function sourceHeaders(){const raw=String(S.sourceHeader||'').trim();if(!raw)return {};` +
-      `if(/^@?js\\s*:/i.test(raw)){try{return headerObject((0,eval)(raw.replace(/^@?js\\s*:/i,'')));}catch(e){return {};}}` +
+      `const block=/^<js>([\\s\\S]*)<\\/js>$/i.exec(raw);` +
+      `const script=/^@?js\\s*:/i.test(raw)?raw.replace(/^@?js\\s*:/i,''):(block?block[1]:null);` +
+      `if(script!==null){try{return headerObject((0,eval)(script));}catch(e){return {};}}` +
       `return headerObject(raw);}` +
       `function browserDocument(h,p){let html=typeof h==='string'?h:'';const preload=typeof p==='string'?p:'';` +
       `if(!preload)return html;const safe=preload.replace(/<\\/script/gi,'<\\\\/script');` +
@@ -1307,6 +1315,18 @@ export class BookSourceStageWebRuntime {
       `md5Encode:function(v){return cryptoOp('MD5','','','digestHex',v);},` +
       `md5Encode32:function(v){return cryptoOp('MD5','','','digestHex',v);},` +
       `md5Encode16:function(v){return String(cryptoOp('MD5','','','digestHex',v)).substring(8,24);},` +
+      // Legado's symmetric-crypto helpers. Each distinct operation is answered by the native crypto
+      // bridge on the next replay, like java.ajax; DES itself is not offered by the system framework.
+      `createSymmetricCrypto:function(t,k,iv){return symmetricCrypto(t,k,iv);},` +
+      `aesBase64DecodeToString:function(d,k,t,iv){return cryptoOp(t,k,iv,'decryptStr',d);},` +
+      `aesDecodeToString:function(d,k,t,iv){return cryptoOp(t,k,iv,'decryptStr',d);},` +
+      `aesEncodeToBase64String:function(d,k,t,iv){return cryptoOp(t,k,iv,'encryptBase64',d);},` +
+      `aesDecodeArgsBase64Str:function(d,k,m,p,iv){return cryptoOp('AES/'+m+'/'+p,b64bytes(k),b64bytes(iv),'decryptStr',d);},` +
+      `aesEncodeArgsBase64Str:function(d,k,m,p,iv){return cryptoOp('AES/'+m+'/'+p,b64bytes(k),b64bytes(iv),'encryptBase64',d);},` +
+      `tripleDESDecodeStr:function(d,k,m,p,iv){return cryptoOp('DESede/'+m+'/'+p,k,iv,'decryptStr',d);},` +
+      `tripleDESEncodeBase64Str:function(d,k,m,p,iv){return cryptoOp('DESede/'+m+'/'+p,k,iv,'encryptBase64',d);},` +
+      `tripleDESDecodeArgsBase64Str:function(d,k,m,p,iv){return cryptoOp('DESede/'+m+'/'+p,b64bytes(k),b64bytes(iv),'decryptStr',d);},` +
+      `tripleDESEncodeArgsBase64Str:function(d,k,m,p,iv){return cryptoOp('DESede/'+m+'/'+p,b64bytes(k),b64bytes(iv),'encryptBase64',d);},` +
       `__setContextContent:function(v){contextValue=v;if(v&&typeof v==='object'){const raw=JSON.stringify(v);` +
       `try{Object.defineProperty(v,'toString',{configurable:true,enumerable:false,value:function(){return raw;}});}catch(e){}` +
       `try{Object.defineProperty(v,Symbol.toPrimitive,{configurable:true,enumerable:false,value:function(){return raw;}});}catch(e){}` +

@@ -2315,7 +2315,7 @@ Node 回归的宿主只支持 JSONPath，不验证 CSS/XPath、真机 QuickJS、
 | `searchUrl` | 搜索地址 | 字符串 | 搜索请求模板。 |
 | `exploreUrl` | 发现地址 | 字符串 | 发现分类及请求模板。 |
 | `jsLib` | JS库 | 字符串 | 搜索、发现、详情、目录、正文和登录动作共用。简单代码走轻量引擎，复杂语义可按阶段路由到 ArkWeb，但只开放受控主机能力。 |
-| `header` | 请求头 | 字符串 | 书源全局 HTTP 请求头。支持 JSON/宽松对象或每行一个 `名称: 值`；以 `@js:`/`js:` 开头时按脚本动态计算请求头对象，详见[动态 `@js:` 请求头](#动态-js-请求头)。 |
+| `header` | 请求头 | 字符串 | 书源全局 HTTP 请求头。支持 JSON/宽松对象或每行一个 `名称: 值`；以 `@js:`/`js:` 开头或写成 `<js>…</js>` 时按脚本动态计算请求头对象，详见[动态 `@js:` 请求头](#动态-js-请求头)。 |
 | `variableComment` | 暂无编辑项 | 字符串 | 书源变量的说明文本。 |
 | `variable` | 书源变量 | 字符串 | 作为 `source.variable` 注入上下文并独立持久化，登录按钮可通过 `source.setVariable()` 修改。 |
 | `enabledCookieJar` | 启用 Cookie | 布尔，默认 `true` | 导入并保存 Cookie 偏好；登录 Cookie 仍按实际请求域名隔离和附加。 |
@@ -2522,13 +2522,13 @@ URL 内还支持：
 
 ##### 动态 `@js:` 请求头
 
-书源 `header` 以 `@js:`/`js:` 开头时视为动态请求头规则：脚本在受控分阶段运行时中执行（按 URL 阶段预算限制），返回 JSON 对象或 JSON 编码的对象字符串，例如 `"@js:'{\"Referer\": baseUrl + \'/\', \"Cookie\": source.getVariable()}'"`。
+书源 `header` 以 `@js:`/`js:` 开头，或整体写成 `<js>…</js>` 时，视为动态请求头规则：脚本在受控分阶段运行时中执行（按 URL 阶段预算限制），返回 JSON 对象或 JSON 编码的对象字符串，例如 `"@js:'{\"Referer\": baseUrl + \'/\', \"Cookie\": source.getVariable()}'"`。
 
 - 脚本可以读取书源变量、登录状态并调用 `jsLib` 函数。
-- 结果按“书源地址 + 书源变量”缓存约 5 分钟，变量变化后自动重算。
+- 结果按“书源地址 + 书源变量 + 登录信息”缓存约 5 分钟，变量或登录表单（如填入的 Token）变化后自动重算。
 - 返回对象里可以带保留项 `"@cache"` 调整缓存：`false` 或 `0` 表示不缓存，每次请求前重新执行脚本；正数表示缓存秒数，最长仍为 5 分钟。该项只是指令，不会作为请求头发出。时间戳、随机串这类每次请求都要变化的值需要关闭缓存，例如 `"@js:JSON.stringify({\"X-Time\": String(Date.now()), \"@cache\": false})"`。
 - 关闭缓存后，每个请求都会多执行一次分阶段脚本，只在确实需要时使用。脚本拿不到本次请求的地址和请求体；依赖具体地址或请求体计算的值，应在生成该地址的规则里计算，并写进 URL 选项的 `headers`。
-- 动态结果与登录密钥一样只在书源自己的主机（`bookSourceUrl`、`loginUrl` 及同主机地址）上发送，不会附加到第三方图片或内容主机。
+- 宿主代发的请求（详情、目录、正文地址和图片）只把动态结果与登录密钥发往书源自己的主机（`bookSourceUrl`、`loginUrl` 及同主机地址），不会附加到第三方图片或内容主机。书源脚本自己用 `java.ajax` 发出的请求与 Android 一致，发往任何主机都带书源请求头；`bookSourceUrl` 是名称而不是网址的聚合书源也依赖这一点。
 - URL 选项中的显式 `headers` 仍覆盖同名项；运行时不可用时回退为静态字面量解析。
 
 #### 通用会话选项 `session`
@@ -2950,7 +2950,9 @@ QuickJS 不能直接替代 JSONPath/CSS/XPath：选择器需要解析 HTML/JSON 
 - `StringBuilder`、`HashMap`、`ArrayList` 及常用 Java 字符串/集合方法；
 - 使用 `MessageDigest` 或 `Cipher/SecretKeySpec/IvParameterSpec` 封装的常见摘要、AES、DES/3DES 函数。
 
-阶段脚本的返回值按 Android 端 Rhino 的规则取：脚本里（函数体外）最后执行到的那个表达式的值。ECMAScript 2015 起，结尾是没走进去的 `if`、空循环、`switch`、`try` 时整段结果会变成 `undefined`，所以常见的“前一个分支已经 `JSON.stringify(...)`，结尾再跟一个不成立的 `if`”在 ArkWeb 里会丢掉返回值。分阶段运行时会在脚本第一次执行前用内置的 acorn 解析一次（结果按脚本缓存），记录函数体外每条表达式语句的值；只有 ArkWeb 自身得到 `undefined` 时才改用这个值，本来就有返回值的脚本结果不变。解析不了的 Rhino 专有语法（如 `for each`）按原样执行。
+阶段脚本的返回值按 Android 端 Rhino 的规则取：脚本里（函数体外）最后执行到的那个表达式的值。ECMAScript 2015 起，结尾是没走进去的 `if`、空循环、`switch`、`try` 时整段结果会变成 `undefined`，所以常见的“前一个分支已经 `JSON.stringify(...)`，结尾再跟一个不成立的 `if`”在 ArkWeb 里会丢掉返回值。分阶段运行时会在脚本第一次执行前用内置的 acorn 解析一次（结果按脚本缓存），记录函数体外每条表达式语句的值；只有 ArkWeb 自身得到 `undefined` 时才改用这个值，本来就有返回值的脚本结果不变。解析不了的 Rhino 专有语法（如 `for each`）按原样执行。 同一次解析也接受写在所有函数之外的 `return`（部分宿主允许，如发现脚本最后写 `return out.join("\n")`）：这样的脚本会包进一个函数里执行，返回值就是结果。
+
+分阶段运行时提供 Android 端的对称加解密接口：`java.createSymmetricCrypto(transformation, key, iv)`（`encrypt`、`encryptBase64`、`encryptHex`、`decrypt`、`decryptStr`），`java.tripleDESEncodeBase64Str/tripleDESDecodeStr`、`java.tripleDESEncodeArgsBase64Str/tripleDESDecodeArgsBase64Str`，以及 `java.aesBase64DecodeToString`、`java.aesDecodeToString`、`java.aesEncodeToBase64String`、`java.aesEncodeArgsBase64Str/aesDecodeArgsBase64Str`。`Args` 系列的密钥和 IV 先按 Base64 解码。每个不同的加解密操作与 `java.ajax` 一样，在下一次重放时由系统加密框架给出结果，所以签名里用到的时间和随机数在各次重放间保持一致；系统框架不提供单 DES。
 
 ArkWeb 提供真实 ECMAScript 语义，但**不等于完整 Android、Rhino、Node.js 或无限制浏览器环境**。阶段脚本的网络必须经过 `java.ajax` 等受控桥接；`fetch`、`XMLHttpRequest`、`WebSocket` 会被判定为未托管网络。任意 Java 导入、文件、进程、反射、系统组件和第三方原生库不会自动可用。DOM 主要用于登录面板生成的页面；普通搜索/目录/正文规则不应假定目标网页已在可操作 DOM 中。
 

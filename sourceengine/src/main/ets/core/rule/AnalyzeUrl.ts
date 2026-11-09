@@ -325,8 +325,10 @@ export class AnalyzeUrl {
     // Legado permits a header rule such as `@js: JSON.stringify({...})`. Most imported sources
     // use that form only to combine literal credentials with the WebView user agent. Resolve that
     // safe, declarative subset here so every native request receives the same headers; arbitrary
-    // source JavaScript remains in the bounded stage runtime.
-    if (/^@?js\s*:/i.test(text)) {
+    // source JavaScript remains in the bounded stage runtime. `<js>…</js>` is the other Legado form
+    // of the same rule; its code is never a literal header block.
+    const blockScript = /^<js>[\s\S]*<\/js>$/i.test(text);
+    if (blockScript || /^@?js\s*:/i.test(text)) {
       const property = /["']([^"']+)["']\s*:\s*(?:(["'])((?:\\.|(?!\2)[\s\S])*?)\2|java\.getWebViewUA\s*\(\s*\))/g;
       let match: RegExpExecArray | null;
       let found = false;
@@ -343,7 +345,7 @@ export class AnalyzeUrl {
         target[name] = value;
         found = true;
       }
-      if (found) return;
+      if (found || blockScript) return;
     }
     try {
       const parsed = this.parseLooseObject(text);
@@ -531,7 +533,7 @@ export class AnalyzeUrl {
     // A `@js:` header rule may compute dynamic values (Referer/Origin/Cookie from source state).
     // Resolve the complete header map before parsing so those values can join the request; the
     // result is cached per source+variable and still scoped per host in loadSourceHeaders().
-    if (this.source && !this.scriptResolvedHeaders && /^@?js\s*:/i.test((this.source.header || '').trim())) {
+    if (this.source && !this.scriptResolvedHeaders && BookSourceHeaderRuntime.script(this.source.header || '').trim()) {
       this.runtimeSourceHeaders = await BookSourceHeaderRuntime.resolve(this.source);
     }
     this.parse(urlTemplate);

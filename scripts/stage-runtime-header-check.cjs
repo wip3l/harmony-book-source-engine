@@ -91,6 +91,27 @@ async function run() {
   await new AnalyzeUrl(named, null).fetch('https://cdn.other.test/cover.jpg');
   assert.equal(sent[0].headers['X-Api-Key'], undefined, 'host-issued requests do not leak it to other sites');
   assert.equal(sent[0].headers['X-Fixed'], '1', 'literal header values still apply');
+  // `<js>…</js>` is the other Legado form of a header script (here reading a token from the login form).
+  const block = new BookSource();
+  block.bookSourceUrl = 'https://block.test';
+  block.header = '<js>\nconst m = source.getLoginInfoMap();\nconst h = {};\nif (m.Token) h.Authorization = `Bearer ${m.Token}`;\nJSON.stringify(h)\n</js>';
+  block.loginInfo = JSON.stringify({Token: 't1'});
+  BookSourceHeaderRuntime.clearCache();
+  sent.length = 0;
+  const blockRequest = new Request();
+  blockRequest.source = block;
+  blockRequest.baseUrl = block.bookSourceUrl;
+  blockRequest.code = 'JSON.parse(java.ajax("https://block.test/api")).ok';
+  assert.equal((await runtime.execute(blockRequest)).value, '1');
+  assert.equal(sent[0].headers['Authorization'], 'Bearer t1', '<js> header scripts run inside stage scripts');
+  sent.length = 0;
+  await new AnalyzeUrl(block, null).fetch('https://block.test/direct');
+  assert.equal(sent[0].headers['Authorization'], 'Bearer t1', '<js> header scripts run for direct requests');
+  assert.equal(Object.keys(sent[0].headers).some(name => /const|JSON/.test(name)), false, 'script text is not a header block');
+  block.loginInfo = JSON.stringify({Token: 't2'});
+  sent.length = 0;
+  await new AnalyzeUrl(block, null).fetch('https://block.test/direct');
+  assert.equal(sent[0].headers['Authorization'], 'Bearer t2', 'a new login token is not hidden by the header cache');
   console.log('PASS stage runtime requests reuse script-evaluated headers; direct requests still resolve them');
   console.log('PASS script requests of named sources carry the header to any host; host requests stay site-scoped');
 }
