@@ -72,6 +72,26 @@ async function run() {
   const response = await new AnalyzeUrl(source, null).fetch('https://header.test/direct');
   assert.equal(response.statusCode, 200);
   assert.equal(sent[0].headers['X-Api-Key'], 'k-v1');
+  // Aggregator sources are named rather than addressed: the script's own java.ajax calls still carry the
+  // source header to the hosts it chose, while host-issued requests stay limited to the source's site.
+  const named = new BookSource();
+  named.bookSourceUrl = 'Named aggregator';
+  named.jsLib = source.jsLib;
+  named.variable = 'v2';
+  named.header = source.header;
+  BookSourceHeaderRuntime.clearCache();
+  sent.length = 0;
+  const namedRequest = new Request();
+  namedRequest.source = named;
+  namedRequest.baseUrl = 'https://api.aggregator.test';
+  namedRequest.code = 'JSON.parse(java.ajax("https://api.aggregator.test/para?id=1")).ok';
+  assert.equal((await runtime.execute(namedRequest)).value, '1');
+  assert.equal(sent[0].headers['X-Api-Key'], 'k-v2', 'script requests of a named source keep the dynamic header');
+  sent.length = 0;
+  await new AnalyzeUrl(named, null).fetch('https://cdn.other.test/cover.jpg');
+  assert.equal(sent[0].headers['X-Api-Key'], undefined, 'host-issued requests do not leak it to other sites');
+  assert.equal(sent[0].headers['X-Fixed'], '1', 'literal header values still apply');
   console.log('PASS stage runtime requests reuse script-evaluated headers; direct requests still resolve them');
+  console.log('PASS script requests of named sources carry the header to any host; host requests stay site-scoped');
 }
 run().catch(error => { console.error(error); process.exitCode = 1; });

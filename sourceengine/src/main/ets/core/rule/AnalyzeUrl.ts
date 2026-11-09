@@ -77,7 +77,8 @@ export class AnalyzeUrl {
    * The caller is a stage script that already evaluated the source's `@js:` header rule (with the
    * full jsLib and login state) and passed the result to the constructor. Resolving it again would
    * queue a header task on the serial stage runtime — the very runtime that is waiting for this
-   * request — and the request would never start.
+   * request — and the request would never start. Those headers are sent to whatever host the
+   * script requested (see loadSourceHeaders).
    */
   useScriptResolvedHeaders(): AnalyzeUrl {
     this.scriptResolvedHeaders = true;
@@ -241,9 +242,13 @@ export class AnalyzeUrl {
     }
     // Complex source scripts can compute their header rule using functions from jsLib and the
     // current login state. The bounded stage runtime evaluates that source-owned expression and
-    // passes only its scalar result here. Runtime headers are source-site scoped: a dynamic
-    // Cookie/Referer must not reach third-party hosts. URL-local explicit headers still win.
-    if (this.isTrustedRequestHost(requestUrl)) {
+    // passes only its scalar result here. Requests the host issues for a source (detail/content
+    // addresses, images) only send them to the source's own site, so a dynamic Cookie/Referer does
+    // not reach third-party hosts. A request the source script itself issues through java.ajax
+    // carries them to any host, as on Android: the script already holds these values and chose
+    // the address, and sources whose bookSourceUrl is a name rather than a URL (aggregators) have
+    // no own site to match at all. URL-local explicit headers still win.
+    if (this.scriptResolvedHeaders || this.isTrustedRequestHost(requestUrl)) {
       for (const key of Object.keys(this.runtimeSourceHeaders)) {
         const name = String(key || '').trim();
         if (name) headers[name] = String(this.runtimeSourceHeaders[key] || '');
