@@ -425,7 +425,7 @@ export class NativeSourceService {
 
   static definitionOf(source: BookSource): NativeSourceDefinition {
     const definition = NativeSourceSpec.unpack(source.jsLib || '');
-    if (!definition) throw new Error('原生书源定义已损坏，请重新导入');
+    if (!definition) throw new Error('原生规则定义已损坏，请重新导入');
     return definition;
   }
 

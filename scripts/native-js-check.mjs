@@ -59,7 +59,7 @@ function vmLibrary(code) {
 try {
   // 只增强未定义的内置函数标识符；保留原错误、位置及其他错误的既有摘要。
   const formatError = (message) => NativeJsPrelude.scriptError(message, NativeExpr.scriptBuiltinNames());
-  const hint = '；若要调用原生书源内置函数，请使用 native.split(...)';
+  const hint = '；若要调用原生规则内置函数，请使用 native.split(...)';
   for (const message of ["ReferenceError: 'split' is not defined", 'ReferenceError: split is not defined']) {
     equal(formatError(message), message + hint, 'QuickJS 和 Node 未定义错误都带修正提示');
   }

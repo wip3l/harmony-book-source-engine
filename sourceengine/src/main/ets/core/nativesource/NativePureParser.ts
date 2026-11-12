@@ -35,7 +35,7 @@ export class NativePureParser {
       return value ? [value] : [];
     };
     if ((request.kind === 'items' || request.kind === 'select') && !NativePureRule.isPure(request.rule)) {
-      throw new Error('带脚本的选择器必须留在原书源上下文');
+      throw new Error('带脚本的选择器必须留在原规则上下文');
     }
     let result: NativeValue;
     if (request.kind === 'expression') {
@@ -43,7 +43,7 @@ export class NativePureParser {
       for (const key of Object.keys(request.scope || {})) scope.set(key, request.scope![key]);
       const expression = new NativeExpr({ jsonPath: (root, path) => JsonPathEvaluator.evaluate(root, path), select,
         digest: digestHashHex, crypto: (name, args) => NativeSourceCrypto.run(name, args),
-        cookie: () => { throw new Error('Cookie 表达式必须留在原书源上下文'); } }).loadLibrary(request.library || '');
+        cookie: () => { throw new Error('Cookie 表达式必须留在原规则上下文'); } }).loadLibrary(request.library || '');
       if (expression.requiresScript(request.rule, request.template)) throw new Error('脚本必须通过有界脚本执行器');
       result = request.template ? expression.render(request.rule, scope) : expression.evaluate(request.rule, scope);
     } else if (request.kind === 'items') {
