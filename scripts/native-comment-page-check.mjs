@@ -41,6 +41,7 @@ try {
   const content = await runner().content(book, chapter);
   assert.equal(content.paragraphComments.length, 2);
   assert.equal(host.requests.length, 2, 'content only fetches body and counts, never page.fetch');
+
   const action = content.paragraphComments[1].url;
   assert(Page.isAction(action)); assert(!action.includes('第一段')); assert(!action.includes('HTML'));
   const page = await runner().commentPage(book, chapter, action);
@@ -170,5 +171,76 @@ try {
     const opening = new Runner(def, varHost, saved).commentPage(book, chapter, varContent.paragraphComments[0].url);
     if (probe.opens) await opening; else await assert.rejects(opening, /失效/);
   }
+  // hot as a request spec: only the busiest paragraphs are fetched, all at once; failures just drop the card.
+  const hotDef = structuredClone(definition);
+  hotDef.content.comments.hot = { top: 2, request: { url: '/hot/{{para.index}}?n={{para.count}}' },
+    text: "= replace(default(first(res.list).content, ''), '\\[fn=\\d+\\]', '')", likes: '= first(res.list).likeCount' };
+  assert.deepEqual(Spec.validate(hotDef), []);
+  for (const bad of [{ request: { url: '/x' } }, { text: '= 1' }, { request: {}, text: '= 1' },
+    { request: { url: '/x' }, text: '= 1', top: 13 }, []]) {
+    const def = structuredClone(definition); def.content.comments.hot = bad;
+    assert(Spec.validate(def).length > 0, JSON.stringify(bad));
+  }
+  const hotHost = createTestHost(JsonPathEvaluator, async (req) => {
+    if (req.url.includes('/stats')) return { counts: { 0: 2, 1: 9, 2: 5 } };
+    if (req.url.includes('/hot/1')) return { list: [{ content: '写得好[fn=12]', likeCount: 321 }] };
+    if (req.url.includes('/hot/2')) throw new Error('offline');
+    return { text: '第一段\n第二段\n第三段' };
+  });
+  const hotContent = await new Runner(hotDef, hotHost, {}).content(book, chapter);
+  const hotUrls = hotHost.requests.map(req => req.url).filter(url => url.includes('/hot/')).sort();
+  assert.deepEqual(hotUrls, ['https://example.com/hot/1?n=9', 'https://example.com/hot/2?n=5'],
+    'only the top paragraphs by count are requested');
+  assert.deepEqual(hotContent.paragraphComments.map(item => [item.line, item.preview ?? '', item.likes ?? '']),
+    [[0, '', ''], [1, '写得好', '321'], [2, '', '']]);
+  // chapterHot: one request for the 本章说 card, alongside the paragraph requests.
+  const chapterDef = structuredClone(hotDef);
+  delete chapterDef.content.comments.chapterPage;
+  chapterDef.content.comments.chapterHot = { request: { url: '/hot/-1' }, text: '= first(res.list).content',
+    likes: '= first(res.list).likeCount' };
+  assert.deepEqual(Spec.validate(chapterDef), []);
+  for (const bad of [{ request: { url: '/x' } }, { text: '= 1' }, 5]) {
+    const def = structuredClone(definition); def.content.comments.chapterHot = bad;
+    assert(Spec.validate(def).length > 0, JSON.stringify(bad));
+  }
+  const chapterHost = createTestHost(JsonPathEvaluator, async (req) => {
+    if (req.url.includes('/stats')) return { counts: { 0: 2 } };
+    if (req.url.includes('/hot/-1')) return { list: [{ content: '本章热评', likeCount: 13662 }] };
+    if (req.url.includes('/hot/')) return { list: [] };
+    return { text: '第一段' };
+  });
+  const chapterContent = await new Runner(chapterDef, chapterHost, {}).content(book, chapter);
+  assert.equal(chapterContent.chapterCommentUrl, 'https://example.com/remote/chapter');
+  assert.equal(chapterContent.chapterCommentPreview, '本章热评');
+  assert.equal(chapterContent.chapterCommentLikes, '13662');
+  const exprChapter = structuredClone(chapterDef);
+  exprChapter.content.comments.chapterHot = '= "表达式本章热评"';
+  assert.equal((await new Runner(exprChapter, chapterHost, {}).content(book, chapter)).chapterCommentPreview,
+    '表达式本章热评');
+  const failChapter = structuredClone(chapterDef);
+  failChapter.content.comments.chapterHot.request.url = '/broken';
+  const failHost = createTestHost(JsonPathEvaluator, async (req) => {
+    if (req.url.includes('/stats')) return { counts: { 0: 2 } };
+    if (req.url.includes('/broken')) return null;
+    return req.url.includes('/hot/') ? { list: [] } : { text: '第一段' };
+  });
+  const failed = await new Runner(failChapter, failHost, {}).content(book, chapter);
+  assert.equal(failed.chapterCommentUrl, 'https://example.com/remote/chapter', 'a failed chapter hot keeps the entry');
+  assert.equal(failed.chapterCommentPreview, undefined);
+
+  const offDef = structuredClone(hotDef);
+  offDef.content.comments.hot.when = "= vars.hot != '关'";
+  offDef.vars = [{ key: 'hot', label: '热评', options: ['开', '关'], default: '开' }];
+  const offHost = createTestHost(JsonPathEvaluator, async (req) => {
+    if (req.url.includes('/stats')) return { counts: { 0: 2, 1: 9 } };
+    return { text: '第一段\n第二段' };
+  });
+  await new Runner(offDef, offHost, { hot: '关' }).content(book, chapter);
+  assert.equal(offHost.requests.filter(req => req.url.includes('/hot/')).length, 0, 'when false sends no hot request');
+  const exprDef = structuredClone(definition);
+  exprDef.content.comments.hot = '= {"1": {"text": "表达式热评", "likes": 7}}';
+  const exprContent = await new Runner(exprDef, hotHost, {}).content(book, chapter);
+  assert.deepEqual(exprContent.paragraphComments.map(item => item.preview ?? ''), ['', '表达式热评', '']);
+  Runner.clearCommentContexts(definition.url);
   console.log('native-comment-page-check: lazy fetch, schema, warm/cold contexts, stale actions, fallback, cancellation, UTF-8 limits, safe injection and saved-var identity passed');
 } finally { mods.cleanup(); }

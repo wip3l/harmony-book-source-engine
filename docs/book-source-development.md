@@ -1054,13 +1054,37 @@ function restoreImage(bytes, ctx) {
 | `when` | 为假时整个评论功能不生效，也不发统计请求 |
 | `stats` | 统计接口，结果绑定为 `stats` |
 | `counts` | 每段评论数：对象的键（或列表下标）是正文行号，值是条数。行号按 `text` 结果的换行切分，从 0 开始。写了 `paragraphUrl` 或 `page` 时必填 |
-| `hot` | 可选，每段热评：键（或列表下标）同 `counts`，值是评论文字，或 `{ "text": "…", "likes": "1.2k" }`。只对有气泡的段落生效，参考宿主在开启热评卡片时把它画在段落下方，点卡片与点气泡打开同一个评论页；取值失败只是不显示卡片 |
+| `hot` | 可选，每段热评。写成表达式时，结果的键（或列表下标）同 `counts`，值是评论文字，或 `{ "text": "…", "likes": "1.2k" }`；统计接口本身不带评论原文时写成对象按段请求，见下。只对有气泡的段落生效，参考宿主在开启热评卡片时把它画在段落下方，点卡片与点气泡打开同一个评论页；取值失败只是不显示卡片 |
+| `chapterHot` | 可选，本章说卡片上显示的一条热评。写法同 `hot`：表达式结果是文字或 `{ "text", "likes" }`；对象只发一个请求、没有 `top` 和 `para`。需要同时有 `chapterUrl` 或 `chapterPage` |
 | `paragraphUrl` | 段评页地址，可用 `para.index`、`para.count`、`para.text`（该段前 90 个字） |
 | `chapterUrl` | 整章评论页地址，可用 `total`（各段条数之和）。有值时章末显示「本章说」入口 |
 | `page`、`chapterPage` | 新增的内联段评／章评页面，见下；需宿主接入支持 |
 | `max` | 一章最多显示多少个气泡，默认 60，上限 300 |
 
 `paragraphUrl`、`chapterUrl`、`page`、`chapterPage` 至少写一个。统计接口失败时正文照常显示，只是没有气泡。评论只对文本正文生效。
+
+#### 按段请求热评
+
+统计接口只给条数时，`hot` 可以写成对象，在取正文时为评论最多的几段各取一条热评：
+
+```json
+"hot": {
+  "top": 6,
+  "request": { "url": "/api/comments?chapter={{chapter.index}}&paragraph={{para.index}}&size=1" },
+  "text": "= first(res.items).text",
+  "likes": "= first(res.items).likes"
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `when` | 可选，为假时不发热评请求，适合配合书源变量做开关 |
+| `top` | 取评论数最多的前几段，1 到 12，默认 6 |
+| `request` | 每段一个请求，可用 `para.index`、`para.count`、`para.text`；写法同 `stats` |
+| `text` | 热评文字，可用请求结果 `res` 和 `para`；结果为空的段落不显示卡片 |
+| `likes` | 可选，点赞数，原样显示 |
+
+`chapterHot` 写成对象时与这些请求同时发出。这些请求整体最多等 4 秒，到时没回来或失败的段落只显示气泡，不影响正文。每章多出 `top` 个请求，按站点能承受的频率设置；接口要求顺序或限流严格时调小 `top`。
 
 #### 内联评论页：点击后取数和生成 HTML
 

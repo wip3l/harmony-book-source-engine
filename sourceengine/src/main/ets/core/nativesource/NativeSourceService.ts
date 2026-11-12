@@ -935,7 +935,8 @@ export class NativeSourceService {
       if (button) lines.push('', button);
     }
     if (result.chapterCommentUrl) {
-      const tail = ReaderActionMarker.create('本章说', result.chapterCommentUrl, '本章说');
+      const tail = ReaderActionMarker.create('本章说', result.chapterCommentUrl, '本章说',
+        result.chapterCommentPreview || '', result.chapterCommentLikes || '');
       if (tail) lines.push('', tail);
     }
     return lines.join('\n');

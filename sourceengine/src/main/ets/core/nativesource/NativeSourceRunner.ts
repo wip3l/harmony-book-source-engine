@@ -17,7 +17,7 @@ import type { NativeScriptEngine } from './NativeScriptHost';
 import type { NativeBrowserResult } from './NativeSourceInteraction';
 import type { NativeExprHost, NativeScriptLibrary, NativeValue } from './NativeExpr';
 import type {
-  NativeActionSpec, NativeVarSpec, NativeCommentsSpec, NativeContentSpec, NativeDynamicMenuSpec, NativeFetchSpec, NativeMenuSpec,
+  NativeActionSpec, NativeVarSpec, NativeCommentsSpec, NativeHotCommentsSpec, NativeChapterHotSpec, NativeContentSpec, NativeDynamicMenuSpec, NativeFetchSpec, NativeMenuSpec,
   NativeRequestSpec,
   NativeSourceDefinition, NativeStageSpec, NativeTocSpec
 } from './NativeSourceSpec';
@@ -215,6 +215,9 @@ export interface NativeContentResult {
   paragraphComments: NativeParagraphComment[];
   /** 整章评论页地址，空串表示没有。 */
   chapterCommentUrl: string;
+  /** 本章说卡片上的热评原文与点赞数（chapterHot），没有时不写。 */
+  chapterCommentPreview?: string;
+  chapterCommentLikes?: string;
   /** 正文末尾的链接按钮。 */
   links: NativeContentLink[];
   /** 漫画的图片地址（kind 为 images 时）。 */
@@ -342,6 +345,8 @@ class UiPacer {
 
 export class NativeSourceRunner {
   private static inlineContexts: Map<string, InlineContext> = new Map<string, InlineContext>();
+  /** 热评请求整体最多等这么久，超过的段落只显示气泡。 */
+  private static readonly HOT_COMMENT_WAIT_MS: number = 4000;
 
   static clearCommentContexts(sourceUrl: string): void {
     NativeSourceRunner.inlineContexts.forEach((context: InlineContext, key: string): void => {
@@ -1091,11 +1096,91 @@ export class NativeSourceRunner {
       typeof likes === 'string' || typeof likes === 'number' ? String(likes) : ''];
   }
 
+  /**
+   * 评论最多的前 top 段各发一个热评请求，同时发出，最多等 HOT_COMMENT_WAIT_MS；到时还没回来的段落不显示卡片。
+   * 返回 { 行号: { text, likes } }。
+   */
+  private async fetchHotComments(spec: NativeHotCommentsSpec, counts: NativeValue, lines: string[],
+    scope: NativeScope): Promise<Record<string, NativeValue>> {
+    const result: Record<string, NativeValue> = {};
+    if (!counts || typeof counts !== 'object') return result;
+    if (spec.when && !NativeExpr.isTruthy(await this.value(spec.when, scope))) return result;
+    const record = counts as Record<string, NativeValue>;
+    const candidates: InlineParagraph[] = [];
+    for (const key of Object.keys(record)) {
+      const line = Number(key);
+      const count = Math.floor(NativeExpr.toNumber(record[key]));
+      if (!Number.isInteger(line) || line < 0 || line >= lines.length || count <= 0) continue;
+      const plain = lines[line].replace(/<[^>]+>/g, '').trim();
+      if (!plain) continue;
+      candidates.push({ index: line, count: count, text: plain.length > 90 ? plain.substring(0, 90) : plain,
+        hash: '', fallbackUrl: '' });
+    }
+    candidates.sort((a: InlineParagraph, b: InlineParagraph): number => b.count - a.count || a.index - b.index);
+    const top = Number.isInteger(spec.top) ? Math.max(1, Math.min(12, spec.top as number)) : 6;
+    const work = candidates.slice(0, top).map(async (para: InlineParagraph): Promise<void> => {
+      const paraScope = scope.child().set('para', { index: para.index, count: para.count, text: para.text });
+      const response = await this.fetchValue(spec.request, paraScope);
+      if (response === null || this.cancelled()) return;
+      paraScope.set('res', response);
+      const text = NativeExpr.toText(await this.value(spec.text, paraScope)).trim();
+      if (!text) return;
+      const likes = spec.likes ? NativeExpr.toText(await this.value(spec.likes, paraScope)).trim() : '';
+      result[String(para.index)] = { text: text, likes: likes };
+    }).map((task: Promise<void>): Promise<void> => task.catch((): void => {}));
+    if (work.length === 0) return result;
+    let timer = -1;
+    await Promise.race([
+      Promise.all(work),
+      new Promise<void>((resolve): void => {
+        timer = setTimeout(resolve, NativeSourceRunner.HOT_COMMENT_WAIT_MS);
+      })
+    ]);
+    if (timer >= 0) clearTimeout(timer);
+    if (this.host.trace) this.host.trace({ field: 'content.comments.hot', rule: spec.text, type: 'hot-comments',
+      count: Object.keys(result).length, preview: `${Object.keys(result).length}/${work.length} 段取到热评`, error: '' });
+    // 超时后仍在进行的请求会继续写入；交出去的是这一刻的副本。
+    return Object.assign({}, result);
+  }
+
+  /** 本章说的热评：[文字, 点赞数]。任何失败、超时都返回空，不影响正文。 */
+  private async fetchChapterHot(spec: string | NativeChapterHotSpec, scope: NativeScope): Promise<string[]> {
+    try {
+      if (typeof spec === 'string') {
+        return NativeSourceRunner.hotEntry({ 'c': await this.value(spec, scope) }, 'c');
+      }
+      if (spec.when && !NativeExpr.isTruthy(await this.value(spec.when, scope))) return ['', ''];
+      const work = (async (): Promise<string[]> => {
+        const hotScope = scope.child();
+        const response = await this.fetchValue(spec.request, hotScope);
+        if (response === null || this.cancelled()) return ['', ''];
+        hotScope.set('res', response);
+        const text = NativeExpr.toText(await this.value(spec.text, hotScope)).trim();
+        if (!text) return ['', ''];
+        return [text, spec.likes ? NativeExpr.toText(await this.value(spec.likes, hotScope)).trim() : ''];
+      })();
+      let timer = -1;
+      const found = await Promise.race([
+        work,
+        new Promise<string[]>((resolve): void => {
+          timer = setTimeout((): void => resolve(['', '']), NativeSourceRunner.HOT_COMMENT_WAIT_MS);
+        })
+      ]);
+      if (timer >= 0) clearTimeout(timer);
+      return found;
+    } catch (_) {
+      return ['', ''];
+    }
+  }
+
   private async collectComments(spec: NativeCommentsSpec, page: StagePage, text: string,
     result: NativeContentResult, book: NativeBookInput, chapter: NativeChapterInput): Promise<void> {
     if (spec.when && !NativeExpr.isTruthy((await this.value(spec.when, page.scope)))) return;
     const scope = page.scope.child();
     scope.set('stats', spec.stats ? await this.fetchValue(spec.stats, scope) : null);
+    // 本章说热评与段落热评同时请求。
+    const chapterHotTask: Promise<string[]> = spec.chapterHot ? this.fetchChapterHot(spec.chapterHot, scope) :
+      Promise.resolve(['', '']);
     const inline = !!(spec.page || spec.chapterPage);
     const contextKey = inline ? this.inlineKey(book, chapter) : '';
     const context: InlineContext = { sourceUrl: this.definition.url, savedAt: Date.now(), values: '', paragraphs: [], total: 0,
@@ -1103,16 +1188,18 @@ export class NativeSourceRunner {
     let total = 0;
     if ((spec.paragraphUrl || spec.page || spec.chapterPage) && spec.counts) {
       const counts = (await this.value(spec.counts, scope));
+      const lines = text.split('\n');
       // 热评只是卡片上的附加文字，取不到时照常显示气泡。
       let hot: NativeValue = null;
-      if (spec.hot) {
-        try {
+      try {
+        if (typeof spec.hot === 'string' && spec.hot) {
           hot = await this.value(spec.hot, scope);
-        } catch (_) {
-          hot = null;
+        } else if (spec.hot && typeof spec.hot === 'object') {
+          hot = await this.fetchHotComments(spec.hot, counts, lines, scope);
         }
+      } catch (_) {
+        hot = null;
       }
-      const lines = text.split('\n');
       const limit = Math.max(1, Math.min(Number(spec.max) || DEFAULT_COMMENT_BUBBLES, MAX_COMMENT_BUBBLES));
       const keys = counts && typeof counts === 'object' ? Object.keys(counts) : [];
       keys.sort((a: string, b: string): number => Number(a) - Number(b));
@@ -1133,8 +1220,13 @@ export class NativeSourceRunner {
         context.paragraphs.push({ index: line, count: count, text: para.text, hash: hash, fallbackUrl: fallback });
         const url = spec.page ? `${NativeCommentPage.SCHEME}${contextKey}/${line}/${hash}` : fallback;
         if (url) {
+          const comment: NativeParagraphComment = { line: line, count: count, url: url };
           const hotEntry = NativeSourceRunner.hotEntry(hot, key);
-          result.paragraphComments.push({ line: line, count: count, url: url, preview: hotEntry[0], likes: hotEntry[1] });
+          if (hotEntry[0]) {
+            comment.preview = hotEntry[0];
+            if (hotEntry[1]) comment.likes = hotEntry[1];
+          }
+          result.paragraphComments.push(comment);
         }
       }
     }
@@ -1158,6 +1250,11 @@ export class NativeSourceRunner {
         if (!oldest.done) NativeSourceRunner.inlineContexts.delete(oldest.value);
       }
       NativeSourceRunner.inlineContexts.set(contextKey, context);
+    }
+    const chapterHot = await chapterHotTask;
+    if (result.chapterCommentUrl && chapterHot[0]) {
+      result.chapterCommentPreview = chapterHot[0];
+      if (chapterHot[1]) result.chapterCommentLikes = chapterHot[1];
     }
   }
 

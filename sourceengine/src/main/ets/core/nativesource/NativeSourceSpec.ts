@@ -195,14 +195,39 @@ export interface NativeCommentPageSpec {
   fetch?: Record<string, NativeFetchSpec>;
 }
 
+/**
+ * 按段取热评：只请求评论数最多的前 top 段，同时发出、整体限时，任何一段失败都只是不显示卡片。
+ * request 里可用 para.index / para.count / para.text；text、likes 再加上请求结果 res。
+ */
+export interface NativeChapterHotSpec {
+  /** 为假时不发热评请求（例如书源自己的热评开关）。 */
+  when?: string;
+  request: NativeRequestSpec;
+  text: string;
+  likes?: string;
+}
+
+export interface NativeHotCommentsSpec extends NativeChapterHotSpec {
+  /** 1 到 12，默认 6。 */
+  top?: number;
+}
+
 export interface NativeCommentsSpec {
   when?: string;
   /** 评论数统计接口，结果绑定为 stats。 */
   stats?: NativeRequestSpec;
   /** 每段评论数：键（或下标）是正文行号，值是条数。 */
   counts?: string;
-  /** 每段热评（可选）：键（或下标）是正文行号，值是文字，或 { text, likes }。有气泡的段落才用得上。 */
-  hot?: string;
+  /**
+   * 每段热评（可选）。写成表达式时，结果的键（或下标）是正文行号，值是文字或 { text, likes }；
+   * 写成对象时按段请求，见 NativeHotCommentsSpec。有气泡的段落才用得上。
+   */
+  hot?: string | NativeHotCommentsSpec;
+  /**
+   * 本章说卡片上的热评（可选）。写成表达式时结果是文字或 { text, likes }；写成对象时发一个请求，
+   * 结果绑定为 res。与段落热评同时请求、同样限时。
+   */
+  chapterHot?: string | NativeChapterHotSpec;
   /** 段评页地址，可用 para.index / para.text / para.count。 */
   paragraphUrl?: string;
   /** 整章评论页地址，可用 total。 */
@@ -733,6 +758,13 @@ export class NativeSourceSpec {
         if ((content.comments.paragraphUrl || content.comments.page) && !content.comments.counts) {
           errors.push('content.comments 使用 paragraphUrl/page 时需要 counts');
         }
+        const hot = content.comments.hot;
+        NativeSourceSpec.checkHotSpec(hot, 'content.comments.hot', errors);
+        if (hot && typeof hot === 'object' && !Array.isArray(hot) && hot.top !== undefined &&
+          !(Number.isInteger(hot.top) && hot.top >= 1 && hot.top <= 12)) {
+          errors.push('content.comments.hot.top 只允许 1 到 12');
+        }
+        NativeSourceSpec.checkHotSpec(content.comments.chapterHot, 'content.comments.chapterHot', errors);
         NativeSourceSpec.checkCommentPage(content.comments.page, 'content.comments.page', errors);
         NativeSourceSpec.checkCommentPage(content.comments.chapterPage, 'content.comments.chapterPage', errors);
       }
@@ -751,6 +783,17 @@ export class NativeSourceSpec {
     if (batch !== undefined && !(typeof batch === 'number' && Number.isInteger(batch) && batch >= 1 && batch <= 16)) {
       errors.push(`${path} 必须是 1 到 16 的整数`);
     }
+  }
+
+  /** hot / chapterHot：表达式字符串，或含 request.url 与 text 的对象。 */
+  private static checkHotSpec(hot: string | NativeChapterHotSpec | undefined, path: string, errors: string[]): void {
+    if (hot === undefined || typeof hot === 'string') return;
+    if (!hot || typeof hot !== 'object' || Array.isArray(hot)) {
+      errors.push(`${path} 需要表达式，或含 request 和 text 的对象`);
+      return;
+    }
+    if (!hot.request || typeof hot.request !== 'object' || !hot.request.url) errors.push(`${path} 需要 request.url`);
+    if (typeof hot.text !== 'string' || !hot.text) errors.push(`${path} 需要 text`);
   }
 
   private static checkCommentPage(page: NativeCommentPageSpec | undefined, path: string, errors: string[]): void {
