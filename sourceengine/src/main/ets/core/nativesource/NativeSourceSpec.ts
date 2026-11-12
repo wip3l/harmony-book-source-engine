@@ -201,6 +201,8 @@ export interface NativeCommentsSpec {
   stats?: NativeRequestSpec;
   /** 每段评论数：键（或下标）是正文行号，值是条数。 */
   counts?: string;
+  /** 每段热评（可选）：键（或下标）是正文行号，值是文字，或 { text, likes }。有气泡的段落才用得上。 */
+  hot?: string;
   /** 段评页地址，可用 para.index / para.text / para.count。 */
   paragraphUrl?: string;
   /** 整章评论页地址，可用 total。 */

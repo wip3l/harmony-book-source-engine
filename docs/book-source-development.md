@@ -1042,6 +1042,7 @@ function restoreImage(bytes, ctx) {
   "when": "= vars.bubbles != '关'",
   "stats": { "url": "{{server}}/api/para/stats?chapter={{d.id}}" },
   "counts": "= stats.data.paras",
+  "hot": "= stats.data.hot",
   "paragraphUrl": "{{server}}/comment?chapter={{d.id}}&para={{para.index}}",
   "chapterUrl": "{{server}}/comment?chapter={{d.id}}",
   "max": 60
@@ -1053,6 +1054,7 @@ function restoreImage(bytes, ctx) {
 | `when` | 为假时整个评论功能不生效，也不发统计请求 |
 | `stats` | 统计接口，结果绑定为 `stats` |
 | `counts` | 每段评论数：对象的键（或列表下标）是正文行号，值是条数。行号按 `text` 结果的换行切分，从 0 开始。写了 `paragraphUrl` 或 `page` 时必填 |
+| `hot` | 可选，每段热评：键（或列表下标）同 `counts`，值是评论文字，或 `{ "text": "…", "likes": "1.2k" }`。只对有气泡的段落生效，参考宿主在开启热评卡片时把它画在段落下方，点卡片与点气泡打开同一个评论页；取值失败只是不显示卡片 |
 | `paragraphUrl` | 段评页地址，可用 `para.index`、`para.count`、`para.text`（该段前 90 个字） |
 | `chapterUrl` | 整章评论页地址，可用 `total`（各段条数之和）。有值时章末显示「本章说」入口 |
 | `page`、`chapterPage` | 新增的内联段评／章评页面，见下；需宿主接入支持 |

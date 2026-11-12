@@ -199,6 +199,9 @@ export interface NativeParagraphComment {
   line: number;
   count: number;
   url: string;
+  /** 该段热评原文，空串表示没有。 */
+  preview?: string;
+  likes?: string;
 }
 
 export interface NativeContentResult {
@@ -1075,6 +1078,19 @@ export class NativeSourceRunner {
     return result;
   }
 
+  /** hot 规则里某一行的热评：值是文字，或 { text, likes }。返回 [文字, 点赞数]。 */
+  private static hotEntry(hot: NativeValue, key: string): string[] {
+    if (!hot || typeof hot !== 'object') return ['', ''];
+    const value = (hot as Record<string, NativeValue>)[key];
+    if (typeof value === 'string' || typeof value === 'number') return [String(value), ''];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return ['', ''];
+    const record = value as Record<string, NativeValue>;
+    const text = record['text'];
+    const likes = record['likes'];
+    return [typeof text === 'string' ? text : '',
+      typeof likes === 'string' || typeof likes === 'number' ? String(likes) : ''];
+  }
+
   private async collectComments(spec: NativeCommentsSpec, page: StagePage, text: string,
     result: NativeContentResult, book: NativeBookInput, chapter: NativeChapterInput): Promise<void> {
     if (spec.when && !NativeExpr.isTruthy((await this.value(spec.when, page.scope)))) return;
@@ -1087,6 +1103,15 @@ export class NativeSourceRunner {
     let total = 0;
     if ((spec.paragraphUrl || spec.page || spec.chapterPage) && spec.counts) {
       const counts = (await this.value(spec.counts, scope));
+      // 热评只是卡片上的附加文字，取不到时照常显示气泡。
+      let hot: NativeValue = null;
+      if (spec.hot) {
+        try {
+          hot = await this.value(spec.hot, scope);
+        } catch (_) {
+          hot = null;
+        }
+      }
       const lines = text.split('\n');
       const limit = Math.max(1, Math.min(Number(spec.max) || DEFAULT_COMMENT_BUBBLES, MAX_COMMENT_BUBBLES));
       const keys = counts && typeof counts === 'object' ? Object.keys(counts) : [];
@@ -1107,7 +1132,10 @@ export class NativeSourceRunner {
         const hash = spec.page ? this.host.digest('SHA256', plain) : '';
         context.paragraphs.push({ index: line, count: count, text: para.text, hash: hash, fallbackUrl: fallback });
         const url = spec.page ? `${NativeCommentPage.SCHEME}${contextKey}/${line}/${hash}` : fallback;
-        if (url) result.paragraphComments.push({ line: line, count: count, url: url });
+        if (url) {
+          const hotEntry = NativeSourceRunner.hotEntry(hot, key);
+          result.paragraphComments.push({ line: line, count: count, url: url, preview: hotEntry[0], likes: hotEntry[1] });
+        }
       }
     }
     if (spec.chapterUrl) {

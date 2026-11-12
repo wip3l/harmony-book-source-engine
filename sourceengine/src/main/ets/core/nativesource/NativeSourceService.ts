@@ -925,7 +925,7 @@ export class NativeSourceService {
     for (const comment of result.paragraphComments) {
       if (comment.line < 0 || comment.line >= lines.length) continue;
       lines[comment.line] += ReaderActionMarker.create(`段评 ${comment.count > 99 ? '99+' : comment.count}`,
-        comment.url, '段评');
+        comment.url, '段评', comment.preview || '', comment.likes || '');
     }
     for (const link of result.links) {
       // 请求按钮把渲染好的请求编进标记地址，点击时由 runReaderAction 取出执行。
