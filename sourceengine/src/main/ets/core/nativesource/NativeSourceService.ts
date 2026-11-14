@@ -302,7 +302,8 @@ class NativeHost implements NativeRunnerHost {
 
   deviceId(): string {
     try {
-      return deviceInfo.ODID || '';
+      // ArkUI-X 的 deviceInfo 声明里没有 ODID，取不到时为空。
+      return (deviceInfo as any).ODID || '';
     } catch (e) {
       return '';
     }
