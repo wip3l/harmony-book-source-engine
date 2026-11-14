@@ -701,8 +701,11 @@ void CallJs(napi_env env, napi_value callback, void* context, void* data)
     } else {
         auto it = side->deferreds.find(message->id);
         if (it != side->deferreds.end()) {
-            napi_resolve_deferred(env, it->second, OutcomeObject(env, message->outcome));
+            // 先移出再兑现：有的 NAPI 实现（ArkUI-X 安卓）在 resolve 里就执行后续的 then，
+            // 后续代码紧接着发起的下一次调用若还看到这条记录，会被当成会话忙而拒绝。
+            napi_deferred deferred = it->second;
             side->deferreds.erase(it);
+            napi_resolve_deferred(env, deferred, OutcomeObject(env, message->outcome));
         }
     }
     delete message;
