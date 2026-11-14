@@ -1044,8 +1044,7 @@ function restoreImage(bytes, ctx) {
   "counts": "= stats.data.paras",
   "hot": "= stats.data.hot",
   "paragraphUrl": "{{server}}/comment?chapter={{d.id}}&para={{para.index}}",
-  "chapterUrl": "{{server}}/comment?chapter={{d.id}}",
-  "max": 60
+  "chapterUrl": "{{server}}/comment?chapter={{d.id}}"
 }
 ```
 
@@ -1059,7 +1058,7 @@ function restoreImage(bytes, ctx) {
 | `paragraphUrl` | 段评页地址，可用 `para.index`、`para.count`、`para.text`（该段前 90 个字） |
 | `chapterUrl` | 整章评论页地址，可用 `total`（各段条数之和）。有值时章末显示「本章说」入口 |
 | `page`、`chapterPage` | 新增的内联段评／章评页面，见下；需宿主接入支持 |
-| `max` | 一章最多显示多少个气泡，默认 60，上限 300 |
+| `max` | 一章最多显示多少个气泡，默认 300，也是上限；想少显示时调小 |
 
 `paragraphUrl`、`chapterUrl`、`page`、`chapterPage` 至少写一个。统计接口失败时正文照常显示，只是没有气泡。评论只对文本正文生效。
 
