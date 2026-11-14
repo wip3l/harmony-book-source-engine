@@ -46,14 +46,14 @@ export class NativeImageScriptRunner {
     cancelled: () => boolean = (): boolean => false, label: string = 'content.imageDecode'): Promise<Uint8Array> {
     const code = this.program(js, fn, context, label);
     if (!input.length || input.length > this.MAX_BYTES) throw new Error('图片脚本输入须为 1 字节至 20 MiB');
-    if (cancelled()) throw new Error('规则请求已取消');
+    if (cancelled()) throw new Error('书源请求已取消');
     const executor = SourceEngineHost.imageScripts();
     if (executor) return await executor.run(code, input, cancelled);
     // At most four downloaded buffers are queued; only one runtime is active. When the queue is full (the current
     // chapter and a preloading neighbour decode at the same time) wait for room instead of failing the image.
     const queuedAt = Date.now();
     while (this.queue.length + (this.active ? 1 : 0) >= 4) {
-      if (cancelled()) throw new Error('规则请求已取消');
+      if (cancelled()) throw new Error('书源请求已取消');
       if (Date.now() - queuedAt >= this.QUEUE_TIMEOUT_MS) throw new Error('图片脚本排队超时');
       await new Promise<void>((resolve): void => { setTimeout(resolve, 25); });
     }
@@ -61,11 +61,11 @@ export class NativeImageScriptRunner {
     this.queue.push(ticket);
     try {
       while (this.active || this.queue[0] !== ticket) {
-        if (cancelled()) throw new Error('规则请求已取消');
+        if (cancelled()) throw new Error('书源请求已取消');
         if (Date.now() - queuedAt >= this.QUEUE_TIMEOUT_MS) throw new Error('图片脚本排队超时');
         await new Promise<void>((resolve): void => { setTimeout(resolve, 25); });
       }
-      if (cancelled()) throw new Error('规则请求已取消');
+      if (cancelled()) throw new Error('书源请求已取消');
     } catch (e) {
       this.queue = this.queue.filter((id: number): boolean => id !== ticket);
       throw e;
@@ -94,7 +94,7 @@ export class NativeImageScriptRunner {
         if (expired || stopped) current.cancel();
       }, 25);
       const result = await session.evaluateBinary(code, input, `${label}.js`, 2000);
-      if (stopped || cancelled()) throw new Error('规则请求已取消');
+      if (stopped || cancelled()) throw new Error('书源请求已取消');
       if (expired || Date.now() - started >= 10000 || result.timedOut) throw new Error('图片脚本超时');
       if (!result.success) throw new Error(result.error || '图片脚本执行失败');
       if (!result.bytes.length || result.bytes.length > this.MAX_BYTES) throw new Error('图片脚本须返回 1 字节至 20 MiB 的字节数据');

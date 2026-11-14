@@ -402,7 +402,7 @@ export class NativeSourceRunner {
     const login = this.definition.login;
     if (login && login.script) return await this.scriptLogin(String(login.script).trim(), form);
     const submit = login ? login.submit : undefined;
-    if (!submit) return { ok: false, token: '', user: '', message: '该规则没有配置表单登录' };
+    if (!submit) return { ok: false, token: '', user: '', message: '该书源没有配置表单登录' };
     const scope = (await this.baseScope()).set('form', form);
     const response = await this.host.fetch((await this.buildRequest(submit, scope, '')));
     if (!response.ok || !response.body) {
@@ -487,7 +487,7 @@ export class NativeSourceRunner {
   /** 表单登录的辅助请求（发送验证码等），返回提示文字。 */
   async sendLoginCode(form: Record<string, string>): Promise<string> {
     const spec = this.definition.login ? this.definition.login.sendCode : undefined;
-    if (!spec) return '该规则没有配置这个操作';
+    if (!spec) return '该书源没有配置这个操作';
     return await this.performAction(spec, (await this.baseScope()).set('form', form), 'login.sendCode', { form: form });
   }
 
@@ -603,7 +603,7 @@ export class NativeSourceRunner {
   /** 用书源声明的检查接口确认登录状态。 */
   async checkLogin(): Promise<NativeLoginState> {
     const check = this.definition.login ? this.definition.login.check : undefined;
-    if (!check) return { ok: false, name: '', message: '该规则没有配置登录检查' };
+    if (!check) return { ok: false, name: '', message: '该书源没有配置登录检查' };
     const scope = (await this.baseScope());
     const request = (await this.buildRequest(check, scope, ''));
     const response = await this.host.fetch(request);
@@ -779,7 +779,7 @@ export class NativeSourceRunner {
       const full = await this.appendTocPage(stage, loaded, chapters, limit, pacer);
       if (this.cancelled()) return [];
       if (full) {
-        if (requireComplete) throw new Error('目录超过章节数量限制，已保留原规则');
+        if (requireComplete) throw new Error('目录超过章节数量限制，已保留原书源');
         break;
       }
       // 脚本阶段自己处理翻页。
@@ -787,7 +787,7 @@ export class NativeSourceRunner {
       const pending = (await this.nextUrls(stage.nextUrl, loaded, 'toc.nextUrl')).filter((url: string): boolean => !visited.has(url));
       if (pending.length === 0) break;
       if (requireComplete && pending.length > MAX_TOC_PAGES - page) {
-        throw new Error('目录超过分页限制，已保留原规则');
+        throw new Error('目录超过分页限制，已保留原书源');
       }
       if (pending.length === 1) {
         nextUrl = pending[0];
@@ -806,7 +806,7 @@ export class NativeSourceRunner {
           const listedFull = await this.appendTocPage(stage, listedPage, chapters, limit, pacer);
           if (this.cancelled()) return [];
           if (listedFull) {
-            if (requireComplete) throw new Error('目录超过章节数量限制，已保留原规则');
+            if (requireComplete) throw new Error('目录超过章节数量限制，已保留原书源');
             return stage.reverse === true ? chapters.reverse() : chapters;
           }
         }
@@ -1328,7 +1328,7 @@ export class NativeSourceRunner {
       }
       const html = await this.template(spec.html, scope);
       if (typeof html !== 'string') throw new Error('内联页面 HTML 求值结果必须是字符串');
-      if (!html.trim()) throw new Error('规则没有返回评论页面');
+      if (!html.trim()) throw new Error('书源没有返回评论页面');
       if (NativeCommentPage.bytes(html) > NativeCommentPage.MAX_HTML) throw new Error('内联页面 HTML 超过 256 KiB');
       result.html = html;
       result.dataJson = JSON.stringify(await this.renderDeep(spec.data || {}, scope));
@@ -1367,7 +1367,7 @@ export class NativeSourceRunner {
   }
 
   private requireStage<T>(stage: T | undefined, label: string): T {
-    if (!stage) throw new NativeSourceError(`该规则没有配置${label}`);
+    if (!stage) throw new NativeSourceError(`该书源没有配置${label}`);
     return stage;
   }
 
@@ -1633,7 +1633,7 @@ export class NativeSourceRunner {
   private scriptEngine(): NativeScriptEngine {
     if (this.engine) return this.engine;
     const code = this.definition.js || '';
-    if (!code.trim()) throw new NativeSourceError('阶段写了 script，但规则没有 js');
+    if (!code.trim()) throw new NativeSourceError('阶段写了 script，但书源没有 js');
     if (!this.host.scriptEngine) throw new NativeSourceError('当前环境不支持脚本阶段');
     this.engine = this.host.scriptEngine(code);
     return this.engine;
@@ -1651,7 +1651,7 @@ export class NativeSourceRunner {
     if (Object.prototype.hasOwnProperty.call(this.varValues, key)) {
       this.varValues[key] = value === null || value === undefined ? '' : NativeExpr.toText(value);
     }
-    if (!this.host.saveVars) throw new Error('当前环境不支持保存规则变量');
+    if (!this.host.saveVars) throw new Error('当前环境不支持保存书源变量');
     await this.host.saveVars(this.savedVars());
   }
 
