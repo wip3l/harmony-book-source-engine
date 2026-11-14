@@ -473,20 +473,21 @@ export class BookSourceStageWebRuntime {
 
   private async executeTask(request: StageWebRuntimeRequest): Promise<StageWebRuntimeResult> {
     this.ensureNotCancelled(request);
-    // Coordinators may hold a source snapshot while the login/editor page saves a new token.
-    // Refresh missing runtime fields before executing so a stale empty snapshot cannot issue an
-    // unauthenticated request or overwrite the newly saved state when the stage completes.
+    // Coordinators may hold a source snapshot (a reader keeps the one it opened with) while the
+    // login/editor page saves new state. Persisted state is authoritative, including an EMPTY value:
+    // an empty login header after the user logged out is the logout itself, so the snapshot's old
+    // token must neither be sent nor written back. (Letting a non-empty snapshot win over an empty
+    // database brought a revoked token back after every logout, and the account could not log in again.)
     const persistence = BookSourceRuntimeStore.forSource(request.source);
     const persistedAtStart = persistence ? await persistence.getBookSource(request.source.bookSourceUrl) : null;
     if (persistedAtStart) {
-      // Persisted state is authoritative: the login panel (tone/type/explore switches) and the
-      // editor write runtime state through the database, while coordinators may still hold a
-      // snapshot captured before that save. A stale non-empty snapshot previously won whenever
-      // it was not literally empty, silently ignoring freshly saved settings.
-      request.source.variable = persistedAtStart.variable || request.source.variable;
-      request.source.loginHeader = persistedAtStart.loginHeader || request.source.loginHeader;
-      request.source.loginInfo = persistedAtStart.loginInfo || request.source.loginInfo;
+      request.source.variable = persistedAtStart.variable || '';
+      request.source.loginHeader = persistedAtStart.loginHeader || '';
+      request.source.loginInfo = persistedAtStart.loginInfo || '';
     }
+    // What the script saw when it started; on completion only the fields it actually changed are saved.
+    const variableAtStart = request.source.variable || '';
+    const loginHeaderAtStart = request.source.loginHeader || '';
     const sourceKey = request.source.bookSourceUrl || request.source.bookSourceName || 'source';
     const journal = new BookSourceExecutionJournal();
     const responses: Record<string, string> = journal.responses;
@@ -669,10 +670,15 @@ export class BookSourceStageWebRuntime {
       cacheState = this.storeCache(sourceKey, nextCacheState, cacheState);
       const persistedBeforeSave = persistence ? await persistence.getBookSource(request.source.bookSourceUrl) : null;
       if (persistedBeforeSave) {
-        // Empty state from a non-login task is never an explicit logout. Preserve a token/header
-        // that another page saved while this asynchronous task was running.
-        request.source.variable = step.variable || persistedBeforeSave.variable || '';
-        request.source.loginHeader = request.source.loginHeader || persistedBeforeSave.loginHeader || '';
+        // A stage task may run for seconds while the login page logs out or logs in again. Write
+        // back only what this script itself changed; everything else keeps the latest saved value,
+        // so a task that started with the old token cannot overwrite the new one when it finishes.
+        const scriptVariable = request.source.variable || '';
+        const scriptLoginHeader = request.source.loginHeader || '';
+        request.source.variable = scriptVariable !== variableAtStart ?
+          scriptVariable : (persistedBeforeSave.variable || '');
+        request.source.loginHeader = scriptLoginHeader !== loginHeaderAtStart ?
+          scriptLoginHeader : (persistedBeforeSave.loginHeader || '');
         request.source.loginInfo = this.mergeRuntimeState(
           persistedBeforeSave.loginInfo || request.source.loginInfo || '',
           step.javaState, step.sourceState);
