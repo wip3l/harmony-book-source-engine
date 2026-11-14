@@ -3333,7 +3333,7 @@ https://img.example/page.jpg,{"headers":{"Referer":"https://example.com/"}}
 登录动作使用独立 ArkWeb 运行环境，不会让搜索或正文自动改走登录页面。当前桥接包括：
 
 - `java.ajax` 的受控 HTTP 请求与逐步响应回填；
-- `source.variable`、`loginHeader`、`loginInfo`、`source.get/put` 和 `cache` 状态；
+- `source.variable`、`loginHeader`、`loginInfo`、`source.get/put` 和 `cache` 状态：任务开始时以宿主数据库里的值为准（库里登录头为空即视为已退出，不用页面持有的旧快照补回），任务结束只写回脚本自己改过的变量和登录头，改密码重新登录后不会被仍在运行的旧任务写回旧密钥；
 - Cookie 获取、设置、替换、按名称删除及网页 Cookie 回写；
 - Base64/Base64URL、Hex、URL/HTML 编解码、字节数组和 UUID；
 - `createSymmetricCrypto` 的 AES/DES/3DES 常见变换；
