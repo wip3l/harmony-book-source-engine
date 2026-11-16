@@ -291,11 +291,18 @@ export class AnalyzeUrl {
       }
     } catch (_) {
     }
+    let hasOwnSite = false;
     for (const trustedUrl of trustedUrls) {
       const trustedHost = this.urlHost(trustedUrl);
-      if (trustedHost && this.hostsShareSite(requestHost, trustedHost)) return true;
+      if (!trustedHost) continue;
+      hasOwnSite = true;
+      if (this.hostsShareSite(requestHost, trustedHost)) return true;
     }
-    return false;
+    // Aggregator sources use a name (for example "云端聚合"), not a URL, as bookSourceUrl, so they
+    // have no own site to match against. Their login header and `@js:` header rule are the only way
+    // to authenticate the API they call; keeping the headers host-scoped here silently drops them
+    // and every native request (search/explore) leaves the device as an anonymous caller.
+    return !hasOwnSite;
   }
 
   private urlHost(url: string): string {
