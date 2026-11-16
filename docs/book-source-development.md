@@ -1752,7 +1752,7 @@ function verifyAndCheck(ctx) {
 
 #### Cookie、登录与“完成”
 
-- API 26 的默认 ArkWeb 存储适配器通过 `fetchCookieSync(url, false, true)` 读取目标 URL 的第一方分区 Cookie，用于原生文本/二进制 HTTP 和脚本 `cookie.get`；API 20–25 保留旧读取方式。自定义 `SourceCookieJar` 可提供 `getRequestCookie`，未提供时回退到 `getCookie`。
+- API 26 的默认 ArkWeb 存储适配器通过 `fetchCookieSync(url, false, true)` 读取目标 URL 的第一方分区 Cookie，用于原生文本/二进制 HTTP 和脚本 `cookie.get`；API 20–25 保留旧读取方式。自定义 `SourceCookieJar` 可提供 `getRequestCookie`，未提供时回退到 `getCookie`；也可提供 `removeCookieAsync`，退出登录（`NativeSourceService.logout`，异步）会优先用它在后台删除站点 Cookie，未提供时退回同步 `removeCookie`。默认 ArkWeb 存储的异步删除走 `fetchCookie` / `configCookie`，同步删除也改为先批量写入再统一回读，避免 Cookie 多的站点在界面线程上卡住。
 - 没有显式 Cookie 头时按现有规则自动使用存储中的匹配 Cookie；显式 Cookie 头仍优先，不自动补齐。通常应让存储负责发送，避免手工拼接旧值覆盖验证后会话。原有跨 origin 去凭据策略不变。
 - Cookie 复制路径仍不读取分区 Cookie；`cf_clearance`、`__cf_bm` 不跨地址复制。不要将挑战 Cookie 搬到镜像域，或把分区 Cookie 当成普通 Cookie 注入网页。
 - `cookie.remove` 清理目标地址的会话，不清空应用全局 Cookie。分区清理包含保留 Partitioned 属性的过期写入和短期墓碑兼容处理；当前设备验证仅覆盖测试域根路径，不能保证所有 Domain/Path 组合都已验收。
