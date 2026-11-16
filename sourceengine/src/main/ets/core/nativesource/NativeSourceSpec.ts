@@ -248,7 +248,7 @@ export interface NativeLinkSpec {
   message?: string;
 }
 
-/** 漫画图片解密：密钥和 IV 在取正文时算好，应用下载图片后用系统加密框架解密。 */
+/** 正文图片解密（漫画图片与图文正文里的插图）：密钥和 IV 在取正文时算好，应用下载图片后用系统加密框架解密。 */
 export interface NativeImageDecodeSpec {
   /** js 中的字节处理函数，与标准加密字段互斥。 */
   script?: string;
@@ -499,11 +499,11 @@ export class NativeSourceSpec {
       }
     } else if (cover !== undefined) {
       if (cover && cover.params !== undefined) errors.push('coverDecode.params 需要 script');
-      if (!cover || !/^AES\/CBC\/PKCS(?:5|7)Padding$/i.test(cover.algorithm || '') ||
+      if (!cover || !/^AES\/CBC\/(?:PKCS5|PKCS7|No)Padding$/i.test(cover.algorithm || '') ||
         ![16, 24, 32].includes(NativeSourceSpec.coverKeyBytes(cover)) ||
         (cover.ivPrefixBytes === 16 ? !!cover.iv :
           (cover.ivPrefixBytes !== undefined && cover.ivPrefixBytes !== 0) || !/^[a-f0-9]{32}$/i.test(cover.iv || ''))) {
-        errors.push('coverDecode 需要 AES/CBC/PKCS7Padding、16/24/32 字节的 key，以及 iv 或 ivPrefixBytes:16');
+        errors.push('coverDecode 需要 AES/CBC/PKCS7Padding 或 AES/CBC/NoPadding、16/24/32 字节的 key，以及 iv 或 ivPrefixBytes:16');
       }
     }
     if (!definition.name) errors.push('缺少书源名称 name');

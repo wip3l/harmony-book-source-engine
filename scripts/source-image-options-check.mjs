@@ -65,6 +65,36 @@ try {
   const missing = structuredClone(legacy); missing.content.imageDecode.key = 'not-a-selector';
   await assert.rejects(content(missing), /密钥求值为空/);
 
+  // 图文正文里的插图也套用 imageDecode：<img> 改写成“地址,{选项}”，宿主取图时解密。
+  const article = structuredClone(base);
+  article.type = 'text';
+  article.content = { text: '= data.html', mediaHeaders: { Referer: 'https://example.com/' }, imageDecode: {
+    algorithm: 'AES/CBC/NoPadding', key: '0123456789abcdef', keyEncoding: 'utf8', iv: "= 'fedcba9876543210'" } };
+  assert.deepEqual(Spec.validate(article), []);
+  const textBook = { ...book, type: 'text' };
+  const articleHtml = '<p>开头</p><img src="/lazy.gif" data-src="/a.jpg?x=1&amp;y=2" alt="a">' +
+    "<img src='https://cdn.example.com/b.png'><img src=\"/c.jpg,{&quot;headers&quot;:{}}\">" +
+    '<img ident="c1" src="/bubble.png"><img alt="no address">';
+  const articleText = (await new Runner(article, createTestHost(Json, () => ({ html: articleHtml })))
+    .content(textBook, chapter)).text;
+  const decodeOption = { algorithm: 'AES/CBC/NoPadding', key: Buffer.from('0123456789abcdef').toString('hex'),
+    iv: Buffer.from('fedcba9876543210').toString('hex') };
+  const inline = [...articleText.matchAll(/<img src="([^"]*),(\{[^"]*\})">/g)]
+    .filter((m) => m[2].includes('decode')).map((m) => [m[1], JSON.parse(m[2].replace(/&quot;/g, '"').replace(/&amp;/g, '&'))]);
+  assert.deepEqual(inline, [
+    ['/a.jpg?x=1&amp;y=2', { headers: { Referer: 'https://example.com/' }, decode: decodeOption, imageIndex: 0 }],
+    ['https://cdn.example.com/b.png', { headers: { Referer: 'https://example.com/' }, decode: decodeOption, imageIndex: 1 }]
+  ], 'lazy attribute wins over src; options carry decode, headers and index');
+  for (const kept of ['<img src="/c.jpg,{&quot;headers&quot;:{}}">', '<img ident="c1" src="/bubble.png">',
+    '<img alt="no address">', '<p>开头</p>']) {
+    assert(articleText.includes(kept), `left untouched: ${kept}`);
+  }
+  // 没有插图的章节不求值密钥：动态密钥取不到值也不能让纯文字章节失败。
+  const plainArticle = structuredClone(article);
+  plainArticle.content.imageDecode = { algorithm: 'AES/CBC/PKCS5Padding', key: 'not-a-selector' };
+  assert.equal((await new Runner(plainArticle, createTestHost(Json, () => ({ html: '<p>只有文字</p>' })))
+    .content(textBook, chapter)).text, '<p>只有文字</p>');
+
   const menuDef = structuredClone(base);
   menuDef.explore = { list: '$.normal[*]', fields: { name: '$.name', bookUrl: '$.url' }, menus: [
     { title: 'default', url: '/home' },

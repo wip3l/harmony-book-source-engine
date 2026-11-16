@@ -864,6 +864,32 @@ export class NativeSourceRunner {
     return Math.max(1, Math.min(Math.floor(Number(batch)) || DEFAULT_PAGE_BATCH, MAX_PAGE_BATCH));
   }
 
+  /**
+   * 图文正文里的 <img> 改写成漫画图片同样的“地址,{选项}”写法，宿主下载这张图时就会套用 content.imageDecode
+   * 和 mediaHeaders。取地址的属性顺序与宿主一致（懒加载属性优先于 src）；已经带选项的、段评/点击控件
+   * （ident、onclick）和没有地址的标签保持原样。选项里的引号写成实体，宿主取地址前会先还原实体。
+   */
+  static attachInlineImageOptions(html: string, headers: Record<string, string>, decode: NativeImageDecode): string {
+    const names = ['data-original', 'data-src', 'data-url', 'data-lazy-src', 'data-echo', 'src', 'data-r-src'];
+    let index = 0;
+    return html.replace(/<img\b[^>]*>/gi, (tag: string): string => {
+      if (/\s(?:ident|onclick)\s*=/i.test(tag)) return tag;
+      let url = '';
+      for (const name of names) {
+        const match = new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i').exec(tag);
+        url = match ? (match[1] ?? match[2] ?? match[3] ?? '').trim() : '';
+        if (url) break;
+      }
+      if (!url || /^(?:javascript:|about:|#)/i.test(url) || /,\s*\{[\s\S]*\}$/.test(url)) return tag;
+      const options: Record<string, Object> = {};
+      if (Object.keys(headers).length > 0) options['headers'] = headers;
+      options['decode'] = decode;
+      options['imageIndex'] = index++;
+      const json = JSON.stringify(options).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+      return `<img src="${url.replace(/"/g, '&quot;')},${json}">`;
+    });
+  }
+
   /** 把一页正文（文本或图片）追加到结果里，返回追加的字符数。 */
   private async appendContentPage(stage: NativeContentSpec, kind: string, loaded: StagePage, parts: string[],
     imageUrls: string[]): Promise<number> {
@@ -1003,7 +1029,9 @@ export class NativeSourceRunner {
       images: imageUrls, mediaHeaders: (await this.renderHeaders(stage.mediaHeaders, firstPage.scope)),
       imageDecode: null
     };
-    if (kind === 'images' && stage.imageDecode && firstPage) {
+    // 图文正文里的插图同样适用：只在正文确实带 <img> 时求值，免得没有图的章节因密钥规则取不到值而失败。
+    const inlineImages = kind === 'text' && /<img\b/i.test(text);
+    if ((kind === 'images' || inlineImages) && stage.imageDecode && firstPage) {
       const decode = stage.imageDecode;
       if (decode.script !== undefined) {
         const params = (await this.renderDeep(decode.params || {}, firstPage.scope)) as Record<string, NativeValue>;
@@ -1045,6 +1073,9 @@ export class NativeSourceRunner {
           iv: decode.iv ? toHex((await this.value(decode.iv, firstPage.scope, false, 'content.imageDecode.iv'))) : ''
         };
         if (decode.ivPrefixBytes !== undefined) result.imageDecode.ivPrefixBytes = decode.ivPrefixBytes;
+      }
+      if (inlineImages && result.imageDecode) {
+        result.text = NativeSourceRunner.attachInlineImageOptions(result.text, result.mediaHeaders, result.imageDecode);
       }
     }
     if (kind === 'text' && firstPage) {

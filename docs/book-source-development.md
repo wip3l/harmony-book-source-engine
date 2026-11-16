@@ -998,7 +998,7 @@ function videoContent(ctx) {
 }
 ```
 
-**图片解密 `imageDecode`** 用于图片本身被加密的漫画源。密钥和 IV 在取正文时算好，应用下载每张图片后用系统加密框架解密再显示：
+**图片解密 `imageDecode`** 用于图片本身被加密的书源，漫画图片和图文正文（`text`）里的 `<img>` 插图都适用。密钥和 IV 在取正文时算好，应用下载每张图片后用系统加密框架解密再显示：
 
 ```json
 "content": {
@@ -1011,6 +1011,7 @@ function videoContent(ctx) {
 - `algorithm` 支持 AES 和 3DES 的 ECB、CBC、CTR、OFB、CFB 模式。`key`、`iv` 可以是文本（按 UTF-8）或字节。
 - `iv` 总是按表达式求值（没有 `ivEncoding`）：文本 IV 写 `"iv": "= '97b60394abc2fbe1'"`，16 个字符即 16 字节；十六进制 IV 写 `"iv": "= hexBytes('39376236303339346162633266626531')"`。不要把文本 IV 交给 `hexBytes`，`hexBytes('97b60394abc2fbe1')` 只得到 8 字节。
 - 一章里的图片共用同一组参数。下载到的内容本身已经是图片时不解密。
+- 图文正文里的插图：引擎把每个 `<img>` 改写成 `<img src="地址,{选项}">`，选项里带上解密参数和 `mediaHeaders`，书源不用自己往地址里拼选项。地址按 `data-original`、`data-src`、`data-url`、`data-lazy-src`、`data-echo`、`src`、`data-r-src` 的顺序取第一个有值的属性；其他属性名（如站点自定的 `data-image-zoom`）先在 `text` 规则里换到 `src`。已经带选项的地址、段评控件（`ident`、`onclick`）保持原样。正文里没有 `<img>` 时不求值密钥，纯文字章节不受密钥规则影响。
 - 不写 `keyEncoding` 时保留既有规则语义：固定文本须写成 `"key": "= '0123456789abcdef'"`，十六进制密钥可写成 `"key": "= hexBytes(d.key)"`。裸文本是选择器，不是密钥字面值；求值为空会明确报错。
 - 显式设置 `keyEncoding: "utf8"` 或 `"hex"` 后，`key` 接受字面文本、模板或表达式，并按指定编码转换。hex 必须是完整的十六进制字节。静态密钥在导入时校验长度，动态密钥在取正文时校验；AES 支持 16/24/32 字节，3DES 为 24 字节。
 - 只能做标准的对称解密。按规律打乱像素块这类自定义混淆做不了；文件格式特殊时用下面的字节脚本。
@@ -1300,7 +1301,7 @@ blockquote { background: #f3f3f3; }
 
 | 字段 | 语义 |
 | --- | --- |
-| `algorithm` | `AES/CBC/PKCS7Padding`，也接受同等填充的 `AES/CBC/PKCS5Padding` |
+| `algorithm` | `AES/CBC/PKCS7Padding`，也接受同等填充的 `AES/CBC/PKCS5Padding`；密文没有填充（长度正好是 16 的倍数、解开后末尾不去字节）时写 `AES/CBC/NoPadding` |
 | `key` | AES 密钥，解码后必须为 16、24 或 32 字节 |
 | `keyEncoding` | 默认 `hex`（严格十六进制），也支持 `utf8` |
 | `ivPrefixBytes` | 设为 `16` 时，文件前 16 字节是 IV，其余字节是 AES 密文 |
