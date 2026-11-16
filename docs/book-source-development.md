@@ -667,6 +667,108 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 
 `list` 和 `fields` 的写法与搜索相同。
 
+#### 发现页本地筛选与补页
+
+接口能按某个维度筛选时，把变量写进分类地址即可（见上面的[发现页的筛选](#发现-explore)）。接口不支持、只在列表里返回这个字段（字数、更新时间、评分等）时，只能取回来自己筛。表达式只看得到当前这一页，也不能写循环，所以要把发现阶段交给[脚本](#脚本阶段-script)。
+
+先弄清宿主怎么翻页：
+
+- 每翻一页，宿主都用新的 `ctx.page` 调一次函数。发现阶段没有 `nextUrl`，函数只负责回答“第几页有哪些书”，不用一次合并所有页。
+- 每页条数不固定，返回几条就显示几条。
+- 返回 0 条，或返回的书按 `bookUrl` 去重后全是已显示过的，宿主就认为到底了，不再往下翻。请求失败要抛错，这时界面提示失败、允许上滑重试；不要把失败当成空列表返回。
+
+所以本地筛选的要点只有一条：**接口还没到底时，不能返回空页**。一个接口页可能整页被筛掉，函数要接着往后取，直到有命中。接口页码和宿主页码不再一一对应，下一次从哪个接口页开始，用 `cache` 记下来：
+
+```json
+"vars": [
+  { "key": "words", "label": "字数", "options": ["不限", "50万以上", "100万以上"], "default": "不限", "filter": true },
+  { "key": "updated", "label": "更新", "options": ["不限", "7天内", "30天内"], "default": "不限", "filter": true }
+],
+"explore": {
+  "script": "explore",
+  "menus": [
+    { "title": "分类" },
+    { "title": "玄幻", "url": "list:cat=1&gender=1" },
+    { "title": "古言", "url": "list:cat=1&gender=2" },
+    { "title": "榜单" },
+    { "title": "热榜", "url": "once:rank=hot&gender=1" }
+  ],
+  "fields": { "name": "$.title", "author": "$.author", "wordCount": "$.words", "bookUrl": "= '/book/' + $.id" }
+}
+```
+
+```js
+var WORDS = { '50万以上': [500000, Infinity], '100万以上': [1000000, Infinity] };
+var DAYS = { '7天内': 7, '30天内': 30 };
+var SIZE = 50;    // 筛选时每个接口页取几条；先确认站点允许的上限，超出后有的站会截断或报错
+var ENOUGH = 10;  // 凑够这么多条就返回
+var SOFT = 3;     // 已有命中时，一次最多连取几个接口页
+var HARD = 12;    // 一条都没命中时，一次最多连取几个接口页；要小于请求数上限
+
+function fetchList(id, page, size) {
+  var res = http.get('/api/list?' + id + '&page=' + page + '&size=' + size);
+  if (!res.ok) throw new Error('请求失败 ' + res.status);
+  return res.json().data.list || [];
+}
+
+function toMs(t) { t = Number(t); return t > 0 && t < 1e11 ? t * 1000 : t; }
+
+function pass(b, v) {
+  var range = WORDS[v.words];
+  if (range) {
+    var w = Number(b.words);
+    if (!isFinite(w) || w < range[0] || w >= range[1]) return false;
+  }
+  var days = DAYS[v.updated];
+  if (days) {
+    var t = toMs(b.updatedAt);
+    if (!(t > 0)) return true;  // 这个入口不返回更新时间：不参与这一项筛选
+    if (Date.now() - t > days * 86400000) return false;
+  }
+  return true;
+}
+
+function explore(ctx) {
+  var v = ctx.vars;
+  var kind = ctx.url.split(':')[0], id = ctx.url.slice(kind.length + 1);
+  var filtering = !!(WORDS[v.words] || DAYS[v.updated]);
+
+  if (kind === 'once') {  // 接口忽略 page，每次都返回同一批
+    if (ctx.page > 1) return [];
+    var all = fetchList(id, 1, filtering ? SIZE : 20);
+    return filtering ? all.filter(function (b) { return pass(b, v); }) : all;
+  }
+  if (!filtering) return fetchList(id, ctx.page, 20);
+
+  var key = 'explore|' + ctx.url + '|' + v.words + '|' + v.updated + '|';
+  var p = ctx.page === 1 ? 1 : (cache.get(key + ctx.page) || (ctx.page - 1) * SOFT + 1);
+  var hits = [], used = 0;
+  while (used < HARD && hits.length < ENOUGH && !(hits.length > 0 && used >= SOFT)) {
+    var list = fetchList(id, p++, SIZE);
+    used++;
+    if (!list.length) return hits;  // 接口到底
+    list.forEach(function (b) { if (pass(b, v)) hits.push(b); });
+  }
+  cache.put(key + (ctx.page + 1), p, 3600);
+  return hits;
+}
+```
+
+几点说明：
+
+- **游标**：第 1 页总从接口第 1 页开始，之后每页的起点存在 `cache` 里，键包含分类标识和所有筛选值。缓存过期或应用重启后接着翻时取不到游标，就按 `(page - 1) × SOFT + 1` 估一个起点；估偏了可能跳过或重复几本，重复的宿主会去掉。不要用 `ceil(page × 每页条数 / SIZE)` 这类固定比例换算接口页码，筛选后两边的比例是变的，换算出来会整段漏书，或者返回空页让列表提前结束。
+- **连取上限**：`HARD` 次都没有命中时只能返回空页，列表就此结束。`HARD` 越大越不容易误停，但这一页也越慢，而且受脚本请求数限制（默认 30，`scriptLimits.requests` 最多 100，见[原生脚本排错](#原生脚本排错)）。命中很稀疏的筛选，可以先在接口侧缩小范围（例如按分类、按完结状态），再在本地筛剩下的维度。
+- **缺字段的条目**：同一个站点的不同入口，返回的字段常常不一样，例如只有分类列表带更新时间、榜单不带。按“取不到就不通过”来写，不带这个字段的入口在开启筛选后会永远是空的。上面的写法是放行，代价是用户选了“7 天内”仍可能看到更新时间未知的书。也可以只对带这个字段的入口显示筛选，写法见[发现页的筛选](#发现-explore)里的 `when`。必须筛的维度（例如字数）取不到时就不通过。
+- **时间单位**：接口给的时间戳可能是秒，也可能是毫秒，比较前先统一。`toMs` 和内置函数 `formatDate` 一样，小于 10^11 的值按秒处理。
+- **分类标识**：脚本发现阶段的分类 `url` 只是交给 `ctx.url` 的标识，凡是影响响应的参数都要写进去，不能只写主键。上例里男频和女频共用一套分类编号，漏掉 `gender` 时两个分类会请求同一个地址、显示同一批书；游标的缓存键也是用标识拼的，两个分类会共用一个游标。
+- **忽略 `page` 的入口**：榜单、推荐这类入口常常每次都返回同一批书。第 2 页起直接返回空页，可以省掉一次请求；开启筛选时，第 1 页就按最大条数取，一次筛完返回。
+
+验收时，静态检查和调试页的链路通过都证明不了筛选生效，至少再做三件事：
+
+1. 把 `pass` 单独拿出来，用构造的数组跑一遍，确认每个档位的通过数、边界值（正好 50 万字）和缺字段的条目都符合预期。
+2. 在调试页把筛选切到最严的档位，连续请求第 1、2、3 页，确认每页都非空、没有重复，并且第 2 页的起点接在第 1 页后面。
+3. 在应用里切换筛选，对比前后的条数和最小值；再把筛选切回“不限”，确认列表恢复原样。
+
 ### 详情 `detail`
 
 `fields` 与搜索相同，在整个响应上取值；不写 `url` 时请求书籍的 `bookUrl`。另有 `keep`，用来把值存进书籍，后续阶段通过 `book.vars.名称` 读取：
