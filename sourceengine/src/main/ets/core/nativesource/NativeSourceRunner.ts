@@ -138,6 +138,11 @@ export interface NativeRunnerHost extends NativeExprHost {
   openBrowser?(url: string, title: string, wait: boolean, userAgent?: string): Promise<NativeBrowserResult>;
   /** 非交互场景需要网页验证时，交给应用现有的「去验证」流程。 */
   requestVerification?(url: string, title: string, userAgent?: string): void;
+  /**
+   * 详情、目录、正文脚本这次能不能弹出网页。书架检查更新、预加载邻章、缓存下载等后台调用返回 false，
+   * 用户刚在验证页点了返回的书源在冷却期内也返回 false。不提供时视为可以。
+   */
+  canInteract?(): boolean;
 }
 
 /** 设置页动态选项的结果：失败时 options 为空、error 为原因。 */
@@ -1572,7 +1577,7 @@ export class NativeSourceRunner {
    */
   private async runScriptFunction(fn: string, ctx: Record<string, NativeValue>, stageName: string, scope: NativeScope,
     interactive: boolean, keep: Record<string, string> | null,
-    emit: ((value: NativeValue) => Promise<void>) | null = null): Promise<ScriptRun> {
+    emit: ((value: NativeValue) => Promise<void>) | null = null, background: boolean = false): Promise<ScriptRun> {
     const limits = NativeScriptLimits.of(this.definition.scriptLimits ? this.definition.scriptLimits.requests : undefined);
     const scriptHost = new NativeScriptHost({
       host: this.host,
@@ -1590,6 +1595,7 @@ export class NativeSourceRunner {
       keep: keep,
       emit: emit ?? undefined,
       interactive: interactive,
+      background: background,
       requestHeaders: (own: Record<string, string>): Promise<Record<string, string>> => this.requestHeaders(own, scope)
     });
     const startedAt = Date.now();
@@ -1613,10 +1619,12 @@ export class NativeSourceRunner {
     const fn = String(stage.script || '').trim();
     const stageName = STAGE_NAMES[label] || label;
     const interactive = stageName === 'detail' || stageName === 'toc' || stageName === 'content';
+    // 设置页按钮、登录脚本总是用户点出来的，不受这里限制；阶段脚本还要看这次是不是后台调用。
+    const background = interactive && !!this.host.canInteract && !this.host.canInteract();
     let run: ScriptRun;
     try {
       run = await this.runScriptFunction(fn, this.scriptContext(scope, stageName), stageName, scope, interactive,
-        stageName === 'detail' ? this.scriptKeep : null, emit);
+        stageName === 'detail' ? this.scriptKeep : null, emit, background);
     } catch (e) {
       throw new NativeSourceError(`${label}脚本 ${fn}：${(e as Error).message}`);
     }

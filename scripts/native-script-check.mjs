@@ -484,6 +484,52 @@ try {
   host = scriptHost(respond);
   host.browserAnswer = { body: '', error: '网页操作已取消' };
   await rejects(new NativeSourceRunner(uiSource, host, {}).detail(book), /网页操作已取消/, '用户取消网页时脚本得到原因');
+
+  // 后台调用（书架检查更新、预加载、冷却期）：详情/目录/正文脚本也不弹网页，verify 改走「去验证」，open 跳过。
+  host = scriptHost(respond);
+  host.canInteract = () => false;
+  await rejects(new NativeSourceRunner(uiSource, host, {}).detail(book), /需要网页验证（过一下验证），请点「去验证」后重试/,
+    '后台运行的详情脚本里 browser.verify 不弹网页');
+  equal([host.ui.opened.length, host.ui.verifications.map((v) => v.url)], [0, ['https://api.example.com/verify']],
+    '后台运行时改走应用的「去验证」');
+  const backgroundOpen = define({ ...base, js: 'function detail(ctx) { browser.open("/help"); return { name: "照常" }; }',
+    detail: { script: 'detail' } });
+  host = scriptHost(respond);
+  host.canInteract = () => false;
+  equal((await new NativeSourceRunner(backgroundOpen, host, {}).detail(book)).name, '照常',
+    '后台运行时 browser.open 直接跳过，阶段照常完成');
+  equal(host.ui.opened.length, 0, '后台运行时 browser.open 不打开网页');
+  host = scriptHost(respond);
+  host.canInteract = () => false;
+  const actionVerify = define({ ...base, js: 'function go(ctx) { browser.verify("/verify"); return "好"; }',
+    actions: [{ label: '验证', script: 'go' }] });
+  equal(await new NativeSourceRunner(actionVerify, host, {}).runAction(0), '好', '设置页按钮是用户点的，不受后台标记影响');
+  equal(host.ui.opened.length, 1, '设置页按钮里的 browser.verify 照常弹出网页');
+
+  // 变量没取到值拼出的地址（undefined/null）直接报书源错误，不打开空白页。
+  for (const [arg, label] of [['"/" + ctx.missing', '/undefined'], ['ctx.missing', 'undefined'],
+    ['"https://x.example.com/c?id=" + null', '?id=null'], ['""', '空']]) {
+    const badUrl = define({ ...base, js: `function detail(ctx) { browser.verify(${arg}); return {}; }`,
+      detail: { script: 'detail' } });
+    host = scriptHost(respond);
+    await rejects(new NativeSourceRunner(badUrl, host, {}).detail(book), /网页地址无效：.*书源脚本没有给出有效地址/,
+      `无效网页地址 ${label} 报书源错误`);
+    equal(host.ui.opened.length + host.ui.verifications.length, 0, `无效网页地址 ${label} 不打开网页`);
+  }
+  const badOpen = define({ ...base, js: 'function detail(ctx) { browser.open("/book/" + ctx.missing + "/read"); return {}; }',
+    detail: { script: 'detail' } });
+  await rejects(new NativeSourceRunner(badOpen, scriptHost(respond), {}).detail(book), /网页地址无效：\/book\/undefined\/read/,
+    'browser.open 的地址中间有 undefined 也报错');
+
+  // 冷却期：用户关掉验证页后 10 分钟内不再自动弹出，完成验证后恢复。
+  const { NativeSourceInteraction } = mods;
+  NativeSourceInteraction.noteDeclined('src-a', 1000);
+  equal([NativeSourceInteraction.isDeclined('src-a', 1000 + 60000), NativeSourceInteraction.isDeclined('src-b', 2000)],
+    [true, false], '关掉验证页后该书源进入冷却，其他书源不受影响');
+  equal(NativeSourceInteraction.isDeclined('src-a', 1000 + NativeSourceInteraction.DECLINE_COOLDOWN_MS), false, '冷却期满后恢复');
+  NativeSourceInteraction.noteDeclined('src-a', 5000);
+  NativeSourceInteraction.clearDeclined('src-a');
+  equal(NativeSourceInteraction.isDeclined('src-a', 5001), false, '用户完成验证后立即恢复');
   const noUi = scriptHost(respond);
   delete noUi.toast;
   await rejects(new NativeSourceRunner(uiSource, noUi, {}).detail(book), /当前环境不支持提示/, '没有界面端口时明确报错');

@@ -75,6 +75,8 @@ class NativeHost implements NativeRunnerHost {
   private cancelled: () => boolean;
   private maxResponseBytes: number;
   private debugContext: BookSourceDebugContext | null;
+  /** 这次调用是不是用户在前台发起的（见 NativeRunnerHost.canInteract）。 */
+  private interactive: () => boolean;
   private cacheScope: string = '';
   private cacheScopeInput: string[] = [];
   private operationDeadline: number = 0;
@@ -86,10 +88,11 @@ class NativeHost implements NativeRunnerHost {
   trace?: (entry: NativeRuleTrace) => void;
 
   constructor(source: BookSource, http: HttpClient, cancelled: () => boolean, maxResponseBytes: number,
-    debugContext: BookSourceDebugContext | null = null) {
+    debugContext: BookSourceDebugContext | null = null, interactive: () => boolean = (): boolean => true) {
     this.source = source;
     this.http = http;
     this.cancelled = cancelled;
+    this.interactive = interactive;
     this.maxResponseBytes = maxResponseBytes;
     this.debugContext = debugContext;
     this.nativeScripts = SourceEngineHost.nativeScripts()?.create(source, this);
@@ -290,10 +293,19 @@ class NativeHost implements NativeRunnerHost {
   async openBrowser(url: string, title: string, wait: boolean, userAgent: string = ''): Promise<NativeBrowserResult> {
     const handler = NativeSourceInteraction.handler();
     if (!handler) return { body: '', error: '当前环境不支持打开网页' };
-    return await handler.openBrowser({
+    const result = await handler.openBrowser({
       url: url, title: title || this.source.bookSourceName || '网页',
       userAgent: userAgent || this.userAgent(), sourceUrl: this.source.bookSourceUrl, sourceName: this.source.bookSourceName || ''
     }, wait);
+    if (wait) {
+      if (result.error) NativeSourceInteraction.noteDeclined(this.source.bookSourceUrl);
+      else NativeSourceInteraction.clearDeclined(this.source.bookSourceUrl);
+    }
+    return result;
+  }
+
+  canInteract(): boolean {
+    return this.interactive() && !NativeSourceInteraction.isDeclined(this.source.bookSourceUrl);
   }
 
   requestVerification(url: string, title: string, userAgent: string = ''): void {
@@ -617,8 +629,9 @@ export class NativeSourceService {
   }
 
   private static runner(source: BookSource, http: HttpClient, cancelled: () => boolean,
-    maxResponseBytes: number = 0, debugContext: BookSourceDebugContext | null = null): NativeSourceRunner {
-    const host = new NativeHost(source, http, cancelled, maxResponseBytes, debugContext);
+    maxResponseBytes: number = 0, debugContext: BookSourceDebugContext | null = null,
+    interactive: () => boolean = (): boolean => true): NativeSourceRunner {
+    const host = new NativeHost(source, http, cancelled, maxResponseBytes, debugContext, interactive);
     return new NativeSourceRunner(NativeSourceService.definitionOf(source), host,
       NativeSourceService.storedVars(source)).setCancelCheck(cancelled)
       .setCredential(NativeSourceService.credential(source));
@@ -804,10 +817,11 @@ export class NativeSourceService {
   }
 
   static async getBookInfo(source: BookSource, http: HttpClient, book: Book,
-    debugContext: BookSourceDebugContext | null = null, cancelled: () => boolean = (): boolean => false): Promise<Book> {
+    debugContext: BookSourceDebugContext | null = null, cancelled: () => boolean = (): boolean => false,
+    interactive: () => boolean = (): boolean => true): Promise<Book> {
     book.origin = source.bookSourceUrl;
     book.originName = source.bookSourceName;
-    const record = await NativeSourceService.runner(source, http, cancelled, 0, debugContext)
+    const record = await NativeSourceService.runner(source, http, cancelled, 0, debugContext, interactive)
       .detail(NativeSourceService.bookInput(source, book));
     book.name = BookFieldSanitizer.prefer(record.name, book.name);
     book.author = BookFieldSanitizer.prefer(record.author, book.author);
@@ -832,8 +846,9 @@ export class NativeSourceService {
   }
 
   static async getChapterList(source: BookSource, http: HttpClient, book: Book,
-    limit: number = 0, debugContext: BookSourceDebugContext | null = null, cancelled: () => boolean = (): boolean => false, requireComplete: boolean = false): Promise<BookChapter[]> {
-    const records = await NativeSourceService.runner(source, http, cancelled, 0, debugContext)
+    limit: number = 0, debugContext: BookSourceDebugContext | null = null, cancelled: () => boolean = (): boolean => false, requireComplete: boolean = false,
+    interactive: () => boolean = (): boolean => true): Promise<BookChapter[]> {
+    const records = await NativeSourceService.runner(source, http, cancelled, 0, debugContext, interactive)
       .toc(NativeSourceService.bookInput(source, book), limit, requireComplete);
     const chapters: BookChapter[] = [];
     let pendingVolume = '';
@@ -864,14 +879,15 @@ export class NativeSourceService {
 
   /** 视频专用结果保留网页、请求头和直链解析错误，通用正文接口保持原行为。 */
   static async getVideoContent(source: BookSource, http: HttpClient, book: Book, chapter: BookChapter,
-    cancelled: () => boolean): Promise<NativeContentResult> {
-    return await NativeSourceService.runner(source, http, cancelled, 0, null).content(
+    cancelled: () => boolean, interactive: () => boolean = (): boolean => true): Promise<NativeContentResult> {
+    return await NativeSourceService.runner(source, http, cancelled, 0, null, interactive).content(
       NativeSourceService.bookInput(source, book), { url: chapter.url, title: chapter.title, index: chapter.index }, true);
   }
 
   static async getContent(source: BookSource, http: HttpClient, book: Book, chapter: BookChapter,
-    cancelled: () => boolean, debugContext: BookSourceDebugContext | null = null): Promise<NativeContentResult> {
-    const result = await NativeSourceService.runner(source, http, cancelled, 0, debugContext).content(
+    cancelled: () => boolean, debugContext: BookSourceDebugContext | null = null,
+    interactive: () => boolean = (): boolean => true): Promise<NativeContentResult> {
+    const result = await NativeSourceService.runner(source, http, cancelled, 0, debugContext, interactive).content(
       NativeSourceService.bookInput(source, book), { url: chapter.url, title: chapter.title, index: chapter.index });
     if (result.kind === 'text') result.text = NativeSourceService.withCommentMarkers(result);
     // 图片和音频要带请求头、图片要解密时，沿用应用已有的写法：地址后面跟一个选项对象。

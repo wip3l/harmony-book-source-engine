@@ -72,6 +72,11 @@ export interface NativeScriptContext {
    * 搜索、发现是多个书源同时跑的，不弹网页，browser.verify 改走「去验证」。
    */
   interactive: boolean;
+  /**
+   * 本可交互的阶段（详情、目录、正文）这次在后台运行：书架检查更新、预加载邻章、缓存下载，或用户刚在验证页
+   * 点了返回还在冷却期。browser.verify 改走「去验证」，browser.open 直接跳过，免得反复弹出网页。
+   */
+  background?: boolean;
   /** 脚本请求实际带的请求头：顶层 headers 按当前作用域求值，再叠上脚本给出的（同名以脚本为准）。 */
   requestHeaders: (own: Record<string, string>) => Promise<Record<string, string>>;
 }
@@ -176,12 +181,17 @@ export class NativeScriptHost {
         return this.context.emit(args[0] === undefined ? null : args[0]).then((): NativeValue => null);
       }
       case '@browserVerify':
-        return this.browserVerify(this.url(args[0]), this.text(args[1]), args[2]);
+        return this.browserVerify(this.browserUrl(args[0]), this.text(args[1]), args[2]);
       case '@browserOpen': {
         const host = this.context.host;
+        const url = this.browserUrl(args[0]);
+        if (this.context.background) {
+          this.trace(`browser.open ${url}`, '后台运行，不打开网页', '');
+          return null;
+        }
         if (!this.context.interactive) throw new Error(NOT_INTERACTIVE);
         if (!host.openBrowser) throw new Error('当前环境不支持打开网页');
-        return this.browserOpen(this.url(args[0]), this.text(args[1]));
+        return this.browserOpen(url, this.text(args[1]));
       }
       case '@render':
         return this.render(this.url(args[0]), args[1]);
@@ -214,7 +224,7 @@ export class NativeScriptHost {
     }
     const userAgent = supplied === undefined ? await this.userAgent() : String(supplied);
     const host = this.context.host;
-    if (!this.context.interactive) {
+    if (!this.context.interactive || this.context.background) {
       if (host.requestVerification) host.requestVerification(url, hint || '网页验证', userAgent);
       throw new Error(`需要网页验证${hint ? `（${hint}）` : ''}，请点「去验证」后重试`);
     }
@@ -408,6 +418,18 @@ export class NativeScriptHost {
 
   private url(value: NativeValue): string {
     return NativeExpr.resolveUrl(this.text(value).trim(), this.context.sourceUrl);
+  }
+
+  /**
+   * browser.verify / browser.open 的地址。脚本拼地址时变量没取到值，会得到 “undefined”“null” 这样的文本，
+   * 补上站点域名后看起来像正常网址，打开却是空白页，而且每次刷新都再弹一次。这类地址直接报书源错误。
+   */
+  private browserUrl(value: NativeValue): string {
+    const raw = this.text(value).trim();
+    if (!raw || /^(?:undefined|null|NaN)$/.test(raw) || /(?:^|[\/=])(?:undefined|null|NaN)(?=$|[\/?#&])/.test(raw)) {
+      throw new Error(`网页地址无效：${raw || '空'}（书源脚本没有给出有效地址）`);
+    }
+    return this.url(raw);
   }
 
   private text(value: NativeValue): string {
