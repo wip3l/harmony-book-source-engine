@@ -45,6 +45,7 @@ export class AnalyzeUrl {
   private cancelCheck?: () => boolean;
   private rateLimitMaxWaitMs: number = 0;
   private staticSourceHeader: boolean = true;
+  private sourceAuthoredUrl: boolean = false;
 
   constructor(source: BookSource | null, client: HttpClient,
     runtimeSourceHeaders: Record<string, string> = {}) {
@@ -83,6 +84,18 @@ export class AnalyzeUrl {
    */
   useScriptResolvedHeaders(): AnalyzeUrl {
     this.scriptResolvedHeaders = true;
+    return this;
+  }
+
+  /**
+   * The address comes from the source's own request rule (searchUrl / exploreUrl), not from page data. Like a
+   * java.ajax address, the source chose it, so the login header and the evaluated `@js:` header rule go to
+   * whatever host it names. Aggregators whose bookSourceUrl is a name have no own site to match, and their API
+   * host often switches between mirrors; without this their token-guarded search is sent anonymously. Covers,
+   * images and other addresses read from responses must not use an instance marked this way.
+   */
+  trustSourceAuthoredUrl(): AnalyzeUrl {
+    this.sourceAuthoredUrl = true;
     return this;
   }
 
@@ -249,7 +262,7 @@ export class AnalyzeUrl {
     // carries them to any host, as on Android: the script already holds these values and chose
     // the address, and sources whose bookSourceUrl is a name rather than a URL (aggregators) have
     // no own site to match at all. URL-local explicit headers still win.
-    if (this.scriptResolvedHeaders || this.isTrustedRequestHost(requestUrl)) {
+    if (this.scriptResolvedHeaders || this.sourceAuthoredUrl || this.isTrustedRequestHost(requestUrl)) {
       for (const key of Object.keys(this.runtimeSourceHeaders)) {
         const name = String(key || '').trim();
         if (name) headers[name] = String(this.runtimeSourceHeaders[key] || '');
@@ -260,7 +273,7 @@ export class AnalyzeUrl {
 
   private shouldApplyLoginHeaders(requestUrl: string): boolean {
     if (!this.source || !this.source.loginHeader) return false;
-    return this.isTrustedRequestHost(requestUrl);
+    return this.sourceAuthoredUrl || this.isTrustedRequestHost(requestUrl);
   }
 
   /**

@@ -91,6 +91,30 @@ async function run() {
   await new AnalyzeUrl(named, null).fetch('https://cdn.other.test/cover.jpg');
   assert.equal(sent[0].headers['X-Api-Key'], undefined, 'host-issued requests do not leak it to other sites');
   assert.equal(sent[0].headers['X-Fixed'], '1', 'literal header values still apply');
+  // A named source's own searchUrl/exploreUrl address (token-guarded API on a mirror host) carries the evaluated
+  // header and the login header, as a java.ajax address would.
+  named.loginHeader = JSON.stringify({'X-Login': 'L1'});
+  sent.length = 0;
+  await new AnalyzeUrl(named, null).trustSourceAuthoredUrl().fetch('https://api.aggregator.test/api/search?keyword=x');
+  assert.equal(sent[0].headers['X-Api-Key'], 'k-v2', 'source-authored addresses carry the dynamic header');
+  assert.equal(sent[0].headers['X-Login'], 'L1', 'source-authored addresses carry the login header');
+  sent.length = 0;
+  await new AnalyzeUrl(named, null).fetch('https://api.aggregator.test/api/search?keyword=x');
+  assert.equal(sent[0].headers['X-Login'], undefined, 'unmarked requests of a named source stay anonymous');
+  named.loginHeader = '';
+  // Timestamp-signed headers are evaluated per request instead of being served from the cache.
+  const nowSec = String(Math.floor(Date.now() / 1000));
+  assert.equal(BookSourceHeaderRuntime.carriesCurrentTime({'x-ts': nowSec}), true, 'a current Unix time disables caching');
+  assert.equal(BookSourceHeaderRuntime.carriesCurrentTime({'x-ts': String(Date.now())}), true, 'milliseconds too');
+  assert.equal(BookSourceHeaderRuntime.carriesCurrentTime({'x-id': '1234567890'}), false, 'an old 10-digit id is not');
+  const timed = new BookSource();
+  timed.bookSourceUrl = 'https://timed.test';
+  timed.header = '@js:\nJSON.stringify({"X-Ts": String(Math.floor(Date.now() / 1000)), "X-N": String(Math.random())})';
+  BookSourceHeaderRuntime.clearCache();
+  sent.length = 0;
+  await new AnalyzeUrl(timed, null).fetch('https://timed.test/a');
+  await new AnalyzeUrl(timed, null).fetch('https://timed.test/b');
+  assert.notEqual(sent[0].headers['X-N'], sent[1].headers['X-N'], 'a timestamped header rule runs for each request');
   // `<js>…</js>` is the other Legado form of a header script (here reading a token from the login form).
   const block = new BookSource();
   block.bookSourceUrl = 'https://block.test';
