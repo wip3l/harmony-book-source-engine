@@ -29,7 +29,7 @@ export class NativePureParser {
     const request = JSON.parse(input) as ParseInput;
     if (!request || typeof request.rule !== 'string') throw new Error('解析请求无效');
     const select = (content: string, rule: string, baseUrl: string, list: boolean): string[] => {
-      const analyzer = new AnalyzeRule(content, baseUrl);
+      const analyzer = new AnalyzeRule(content, baseUrl).enableChainedReplacements();
       if (list) return analyzer.getStringList(rule);
       const value = analyzer.getString(rule);
       return value ? [value] : [];
@@ -47,7 +47,7 @@ export class NativePureParser {
       if (expression.requiresScript(request.rule, request.template)) throw new Error('脚本必须通过有界脚本执行器');
       result = request.template ? expression.render(request.rule, scope) : expression.evaluate(request.rule, scope);
     } else if (request.kind === 'items') {
-      result = new AnalyzeRule(request.content || '', request.baseUrl || '')
+      result = new AnalyzeRule(request.content || '', request.baseUrl || '').enableChainedReplacements()
         .execute(request.rule, RuleExecutionTarget.ELEMENTS).map(value => {
           if (value.kind !== RuleValueKind.JSON) return value.asString();
           if (value.objectValue !== null && value.objectValue !== undefined) return value.objectValue;

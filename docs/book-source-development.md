@@ -277,7 +277,7 @@ JSONPath 支持通配 `*`、递归 `..`、下标（含负数）、下标列表�
 | `@html` | 元素的外层 HTML，包含元素自己的标签，例如 `#content@html` 以 `<div id="content">` 开头 |
 | `@href`、`@src`、`@content`、`@data-src` 等 | 对应属性值 |
 
-CSS 支持标签、`#id`、`.class`、后代和 `>` 子代、逗号分组、属性选择（`=`、`^=`、`$=`、`*=`、`~=`、`|=`）、`:contains()`、单层 `:has()`、`:not()`、`:first`、`:last`、`:eq(n)`、`:lt(n)`、`:gt(n)`、数字形式的 `:nth-child(n)` 和 `:nth-of-type(n)`。它不是完整的浏览器 CSS 引擎，不支持 `an+b`、伪元素和复杂嵌套伪类。
+CSS 支持标签、`#id`、`.class`、后代和 `>` 子代、逗号分组、属性选择（`=`、`^=`、`$=`、`*=`、`~=`、`|=`）、`:contains()`、单层 `:has()`、`:not()`、`:first`、`:last`、`:eq(n)`、`:lt(n)`、`:gt(n)`、数字形式的 `:nth-child(n)` 和 `:nth-of-type(n)`、`:first-child`、`:first-of-type`。它不是完整的浏览器 CSS 引擎，不支持 `:last-child`、`:only-child`、`:empty` 这类要数兄弟节点或看内容的伪类，也不支持 `an+b`、伪元素和复杂嵌套伪类。原生书源导入和「校验」时，选择器里用了不支持的伪类会给出提示，不影响导入。
 
 两处容易写错，写错时只会静默取空：
 
@@ -304,7 +304,7 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 | `规则1&&规则2` | 把各规则的结果按顺序合并 | `.name@text&&.alias@text` |
 | `规则##正则##替换` | 先取值，再做全局正则替换；省略替换文本时删除匹配部分 | `$.author##^作者：`、`.status@text##^1$##连载` |
 
-`##` 只接一对“正则 + 替换”，不能串联；再写一组 `##` 会变成尾部 `###` 的旧写法（只处理首个命中）。要删掉几段不同的噪声时，用 `|` 合成一个正则，例如 `.author@text##^作者[:：]\s*|\s*著$`；几段要换成不同的文字时，改写成表达式嵌套 `replace(…)`，短枚举值换成展示词用 `lookup`，见[内置函数](#内置函数)。
+原生书源的 `##` 可以串联多对，按顺序逐对做全局替换：`规则##正则1##替换1##正则2##替换2`；最后落单的一个正则表示删除匹配部分，例如 `.meta@text##^作者[:：]\s*####\s*·.*$` 先去掉“作者：”前缀、再去掉“·”之后的分类与状态（中间的 `####` 是“替换为空”加上下一对的开头）。结尾写 `###` 时仍是只处理首个命中的写法，不和串联混用。兼容书源保持阅读的语义，`##` 只接一对。短枚举值换成展示词用 `lookup` 更直观，见[内置函数](#内置函数)。
 
 正则按 Android 阅读的 Java 方言书写也可以（如 `(?i)`），会自动转换；`\d`、`\w` 按 Unicode 语义匹配，只要 ASCII 数字时写 `[0-9]`。替换文本里用 `$1` 引用分组。
 
@@ -628,8 +628,11 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 - 没有 `url` 的条目是分组标题，之后的分类显示在这个标题下面；`when` 为假时该条目隐藏。
 - `title`、`url` 是模板，也可以写 `=` 开头的表达式；`url` 都是打开分类时才求值，所以里面可以用 `page` 和 `vars`。
 - 条目可以带 `headers`，只在打开这个分类时附加，适合个人书架这类需要登录凭据的分类。
+- 条目可以带 `maxPage`，覆盖 `explore.maxPage`，见下面的[翻到底](#发现-explore)。
 - 条目可以带自己的 `method`、`body`，不写时沿用 `explore` 上的；`body` 写空串表示这个分类不带请求体。这样一个书源可以同时对接 GET 和 POST 接口，例如 `{ "title": "筛选", "url": "{{server}}/filter", "method": "POST", "body": "= tojson({page: page, sort: 'hot'})" }`。
 - 条目可以带自己的 `list`、`fields`，分别回退到 `explore` 的同名配置。设置 `fields` 时整组替换，不逐字段合并，仍须包含 `name`、`bookUrl`；只有一两个字段因分类而不同时，不必给每个分类抄一整套，把那个字段在 `explore.fields` 里写成表达式，按 `baseUrl`（当前分类的地址）区分即可，例如 `"kind": "= contains(baseUrl, '/rank/') ? sel('.cat@text') : ''"`。例如 `{ "title": "VIP", "url": "/api/home", "list": "$.data.vipList[*]", "fields": { "name": "$.title", "bookUrl": "$.url" } }`。所有可点击分类都写了完整规则时，可以省略 `explore` 上的 `list`、`fields`；动态分类仍使用 `explore` 上的规则。
+
+**翻到底**：宿主每翻一页就用新的 `page` 请求一次，返回 0 条，或去重后全是已显示过的书，就认为到底了。站点分页有固定上限、越界就报错时（例如每个分类固定 10 页，第 11 页返回 404），写 `explore.maxPage`（1 到 10000 的整数），超过这一页就不再请求，直接按到底处理；各分类上限不同时在 `menus[]` 条目上单独写 `maxPage`，动态分类用 `explore.maxPage`。没写 `maxPage` 时，参考宿主把第 2 页以后的 HTTP 404、410 也当作到底，显示“已加载全部”而不是加载失败；其他错误照常提示、允许重试。
 
 **接口分类 `dynamicMenus`**
 
@@ -683,7 +686,7 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 
 - 每翻一页，宿主都用新的 `ctx.page` 调一次函数。发现阶段没有 `nextUrl`，函数只负责回答“第几页有哪些书”，不用一次合并所有页。
 - 每页条数不固定，返回几条就显示几条。
-- 返回 0 条，或返回的书按 `bookUrl` 去重后全是已显示过的，宿主就认为到底了，不再往下翻。请求失败要抛错，这时界面提示失败、允许上滑重试；不要把失败当成空列表返回。
+- 返回 0 条，或返回的书按 `bookUrl` 去重后全是已显示过的，宿主就认为到底了，不再往下翻（`maxPage` 同样适用于脚本发现）。请求失败要抛错，这时界面提示失败、允许上滑重试；不要把失败当成空列表返回。
 
 所以本地筛选的要点只有一条：**接口还没到底时，不能返回空页**。一个接口页可能整页被筛掉，函数要接着往后取，直到有命中。接口页码和宿主页码不再一一对应，下一次从哪个接口页开始，用 `cache` 记下来：
 
@@ -1294,7 +1297,7 @@ blockquote { background: #f3f3f3; }
 | `group`、`comment` | 分组与说明，显示在书源管理里 |
 | `type` | 默认媒体类型：`text`（默认）、`audio`、`comic`（或 `image`）、`video`，见[媒体类型](#媒体类型) |
 | `enabled`、`enabledExplore` | 首次导入时是否启用、是否在发现页显示，默认都为 `true`。再次导入同一书源时保留用户在应用里的设置 |
-| `rate` | 限流。`次数/毫秒` 表示窗口内最多几次，例如 `"20/60000"`；纯数字是两次请求的最小间隔毫秒数，例如 `"1000"`。对整个书源的所有请求生效，并发抓目录页也要排队；纯数字间隔会让 N 页目录至少耗时 N × 间隔，站点不限流时不要写。搜索时单个请求最多排队 60 秒 |
+| `rate` | 限流。`次数/毫秒` 表示窗口内最多几次，例如 `"20/60000"`；纯数字是两次请求的最小间隔毫秒数，例如 `"1000"`。对整个书源的所有请求生效，并发抓目录页也要排队；纯数字间隔会让 N 页目录至少耗时 N × 间隔，`batch` 也不再起作用（同时写了 `batch` 时导入会提示），站点不限流时不要写。搜索时单个请求最多排队 60 秒 |
 | `headers` | 每个请求都带的请求头，值可以是模板或表达式，每次请求时求值，见[请求是怎么发出的](#请求是怎么发出的)。书源记录的 `header` 字段只保存其中的字面值，供应用的其他功能（如听书播放）使用 |
 | `coverHeaders` | 封面专用请求头，见[加密封面](#加密封面-coverdecode) |
 | `coverDecode` | 封面解密声明（AES 参数或 `js` 里的脚本函数），见[加密封面](#加密封面-coverdecode) |
@@ -2080,7 +2083,18 @@ const titles = cards.map(card => native.sel('@css:.title@text', card));
 
 ## 导入校验与常见报错
 
-导入、编辑页「校验」和保存时会做整份校验，一次最多列 5 条原因。常见报错：
+导入、编辑页「校验」和保存时会做整份校验，一次最多列 5 条原因。
+
+另有一类写法不会报错，但会让书源“看起来能用、实际白跑”，校验通过后作为**提示**列出，不拦截导入：
+
+| 提示 | 原因与处理 |
+| --- | --- |
+| rate 写成纯数字……会让 toc.batch / content.batch 的并发失效 | 纯数字是两次请求的最小间隔，分页只能逐页排队，`batch` 不起作用。站点要限流时写成“次数/毫秒”，例如 `"8/1000"`；不限流就不写 |
+| 选择器里的 :last-child 等不受支持，会静默取空 | 换成支持的写法，见[选择器规则](#选择器规则)：取第几个用 `:eq(n)`、`:first`、`:last` 或索引 `.0`、`.-1` |
+
+编辑页把提示列在编辑框上方，有提示时第一次点「保存」只显示提示，确认后再点一次才保存；导入时只弹出第一条。
+
+常见报错：
 
 | 报错 | 原因与处理 |
 | --- | --- |
@@ -2135,8 +2149,8 @@ const titles = cards.map(card => native.sel('@css:.title@text', card));
 | 请求（各阶段、`cache`、`fetch`、`check`、`submit`、`actions`、`dynamicMenus`、`links[].request`、`comments.stats`） | `url`、`method`、`headers`、`body`、`webView`（`true` 或 `{ waitFor, timeout }`）、`charset`、`retry` |
 | 各阶段通用 | 请求字段、`script`、`let`、`fail`、`list`、`fields` |
 | `search` | 通用字段；`url`\*（或 `script`）、`list`\*、`fields.name`\*、`fields.bookUrl`\* |
-| `explore` | 通用字段、`menus`、`dynamicMenus`（至少一个） |
-| `explore.menus[]` | `title`\*、`url`、`when`、`headers`、`method`、`body`、`list`、`fields` |
+| `explore` | 通用字段、`menus`、`dynamicMenus`（至少一个）、`maxPage` |
+| `explore.menus[]` | `title`\*、`url`、`when`、`headers`、`method`、`body`、`list`、`fields`、`maxPage` |
 | `explore.dynamicMenus` | 请求字段、`list`、`title`、`target`（不写 `script` 时四项必填）、`script` |
 | `detail` | 通用字段、`keep`、`fetch` |
 | `toc` | 通用字段、`nextUrl`、`batch`、`reverse`；`list`\*、`fields.title`\*、`fields.url`\* |
@@ -2843,7 +2857,7 @@ li:nth-of-type(2)
 - 属性存在及 `=`、`^=`、`$=`、`*=`、`~=`、`|=`；
 - `:contains()`、单层 `:has()`、`:not()`；
 - `:first`、`:last`、`:eq(n)`、`:lt(n)`、`:gt(n)`；
-- 数字形式的 `:nth-child(n)`、`:nth-of-type(n)`；
+- 数字形式的 `:nth-child(n)`、`:nth-of-type(n)`，以及 `:first-child`、`:first-of-type`（`:last-child` 等需要数兄弟节点的伪类不支持，写了会取空）；
 - `@text`、`@html`、`@ownText`、`@textNodes` 和属性提取。
 - 旧式 `text.关键字` 从当前 HTML 中查找自身直接文本包含该关键字的元素；只存在于后代节点中的文字不算命中，可继续追加 `@text`、`@ownText`、`@html` 或属性提取。
 

@@ -231,7 +231,7 @@ class NativeHost implements NativeRunnerHost {
   }
 
   select(content: string, rule: string, baseUrl: string, list: boolean): string[] {
-    const analyzer = new AnalyzeRule(content, baseUrl);
+    const analyzer = new AnalyzeRule(content, baseUrl).enableChainedReplacements();
     if (list) return analyzer.getStringList(rule);
     const value = analyzer.getString(rule);
     return value ? [value] : [];
@@ -337,7 +337,7 @@ class NativeHost implements NativeRunnerHost {
   }
 
   selectItems(content: string, rule: string, baseUrl: string): NativeValue[] {
-    const values = new AnalyzeRule(content, baseUrl).execute(rule, RuleExecutionTarget.ELEMENTS);
+    const values = new AnalyzeRule(content, baseUrl).enableChainedReplacements().execute(rule, RuleExecutionTarget.ELEMENTS);
     return values.map((value: RuleValue): NativeValue => {
       if (value.kind === RuleValueKind.JSON) {
         if (value.objectValue !== null && value.objectValue !== undefined) return value.objectValue;

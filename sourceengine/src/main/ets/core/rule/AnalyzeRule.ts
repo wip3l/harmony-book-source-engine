@@ -60,6 +60,8 @@ export class AnalyzeRule {
   // 阅读阶段（详情/目录/正文）由调用方设置，脚本里的 java.toast 才会转给 SourceScriptNotice 显示。
   private noticeStage: string = '';
   private noticeSourceName: string = '';
+  // 原生书源的 `##` 可以串联多对，见 applyProcessor；兼容书源不开。
+  private chainReplacements: boolean = false;
 
   constructor(content: string = '', baseUrl: string = '', ctx?: RuleContext) {
     this.content = content;
@@ -72,6 +74,8 @@ export class AnalyzeRule {
   }
 
   setContent(c: string): AnalyzeRule { this.content = c; return this; }
+  /** 原生书源的选择器调用：`##` 可以串联多对替换。 */
+  enableChainedReplacements(): AnalyzeRule { this.chainReplacements = true; return this; }
   setBaseUrl(u: string): AnalyzeRule {
     this.baseUrl = u;
     this.js.setVar('baseUrl', u);
@@ -1935,6 +1939,15 @@ export class AnalyzeRule {
       nthOfType = parseInt(index);
       return '';
     });
+    // :first-child / :first-of-type 就是序号 1；:last-child 这类要数兄弟节点，仍不支持。
+    s = s.replace(/:first-child(?![-\w(])/gi, () => {
+      nthChild = 1;
+      return '';
+    });
+    s = s.replace(/:first-of-type(?![-\w(])/gi, () => {
+      nthOfType = 1;
+      return '';
+    });
     // `!0` remains the original single-index exclusion. Multiple values such as
     // `!0:-1:-2` are treated as an explicit exclusion list.
     const excludeIndices: number[] = [];
@@ -2811,6 +2824,16 @@ export class AnalyzeRule {
     if (parts.length < 2) return value;
 
     try {
+      // 原生书源可以串联：`规则##正则1##替换1##正则2##替换2`，按顺序逐对全局替换，落单的最后一个正则删除匹配部分。
+      // 结尾 `###`（拆出来的最后一段是 "#"）仍是只处理首个命中的写法；兼容书源保持阅读的语义，不串联。
+      if (this.chainReplacements && parts.length >= 4 && parts[parts.length - 1] !== '#') {
+        let chained = value;
+        for (let i = 1; i < parts.length; i += 2) {
+          const replacement = i + 1 < parts.length ? JavaRegexCompat.convertReplacement(parts[i + 1]) : '';
+          chained = chained.replace(JavaRegexCompat.compile(parts[i], 'g'), replacement);
+        }
+        return chained;
+      }
       if (parts.length >= 3) {
         const regex = JavaRegexCompat.compile(parts[1], parts.length > 3 ? '' : 'g');
         const replacement = JavaRegexCompat.convertReplacement(parts[2]);

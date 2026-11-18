@@ -137,6 +137,32 @@ try {
     if (value !== expected) throw new Error(`行尾归一化不对：${JSON.stringify(html)} => ${JSON.stringify(value)}`);
   }
 
+  // :first-child / :first-of-type 按序号 1 处理；:last-child 仍不支持（取空，原生书源导入时提示）。
+  const siblings = '<div><p class="m"><i>x</i><span>a</span><span>b</span></p><ul><li>1</li><li>2</li></ul></div>';
+  for (const [rule, expected] of [['p.m span:first-child@text', []], ['p.m i:first-child@text', ['x']],
+    ['p.m span:first-of-type@text', ['a']], ['ul li:first-child@text', ['1']], ['ul li:last-child@text', []]]) {
+    assertions++;
+    const value = new AnalyzeRule(siblings, BASE_URL).getStringList(rule);
+    if (JSON.stringify(value) !== JSON.stringify(expected)) {
+      throw new Error(`位置伪类不对：${rule} => ${JSON.stringify(value)}，应为 ${JSON.stringify(expected)}`);
+    }
+  }
+
+  // `##` 串联只对原生书源开启；兼容书源保持阅读语义（多出的段走首个命中）。结尾 ### 两边都是首个命中。
+  const meta = '<p class="meta">作者：张三 · 玄幻 · 连载</p>';
+  for (const [rule, chained, compat] of [
+    ['p.meta@text##^作者[:：]\\s*####\\s*·.*$', '张三', ''],
+    ['p.meta@text##连载##连载中##玄幻##玄幻魔法', '作者：张三 · 玄幻魔法 · 连载中', '连载中'],
+    ['p.meta@text##^作者：##', '张三 · 玄幻 · 连载', '张三 · 玄幻 · 连载'],
+    ['p.meta@text##张(三)##$1###', '三', '三']]) {
+    assertions += 2;
+    const nativeValue = new AnalyzeRule(meta, BASE_URL).enableChainedReplacements().getString(rule);
+    const compatValue = new AnalyzeRule(meta, BASE_URL).getString(rule);
+    if (nativeValue !== chained || compatValue !== compat) {
+      throw new Error(`## 串联不对：${rule} => 原生 ${JSON.stringify(nativeValue)}，兼容 ${JSON.stringify(compatValue)}`);
+    }
+  }
+
   // HTML 目录取字段耗时（参考值，不做断言）。
   const timings = [];
   for (const count of [1000, 8000]) {

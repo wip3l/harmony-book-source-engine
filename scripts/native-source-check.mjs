@@ -327,6 +327,43 @@ try {
   }
   equal(badMethod, '请求方法无效：G T', '无效的请求方法给出明确报错');
 
+  // 发现页 maxPage：超过上限不发请求、返回空列表；分类上的 maxPage 覆盖 explore 上的。
+  const pageCapped = JSON.parse(JSON.stringify(sample));
+  pageCapped.explore.maxPage = 10;
+  pageCapped.explore.menus = [
+    { title: '书库', url: '{{server}}/rank?page={{page}}' },
+    { title: '短榜', url: '{{server}}/rank?page={{page}}', maxPage: 2 }
+  ];
+  const cappedHost = createTestHost(JsonPathEvaluator, respond);
+  const cappedRunner = new NativeSourceRunner(NativeSourceSpec.fromObject(pageCapped), cappedHost,
+    { server: 'https://api.example.com' });
+  const cappedTargets = (await cappedRunner.exploreMenus()).map((m) => m.target);
+  equal((await cappedRunner.explore(cappedTargets[0], 10)).length, 1, 'maxPage 这一页照常请求');
+  const cappedBefore = cappedHost.requests.length;
+  equal(await cappedRunner.explore(cappedTargets[0], 11), [], '超过 maxPage 返回空列表');
+  equal(await cappedRunner.explore(cappedTargets[1], 3), [], '分类自己的 maxPage 覆盖 explore 的');
+  equal(cappedHost.requests.length, cappedBefore, '超过 maxPage 不发请求');
+  const badCap = JSON.parse(JSON.stringify(pageCapped));
+  badCap.explore.maxPage = 0;
+  await rejectsWith(Promise.resolve().then(() => NativeSourceSpec.fromObject(badCap)),
+    /explore\.maxPage 必须是 1 到 10000 的整数/, 'maxPage 必须是正整数');
+
+  // 导入期提示：不拦截导入，只列出会静默失效的写法。
+  const warned = JSON.parse(JSON.stringify(sample));
+  warned.rate = 800;
+  warned.toc = Object.assign({}, warned.toc, { batch: 8 });
+  warned.search = Object.assign({}, warned.search, { fields: Object.assign({}, warned.search.fields, {
+    lastChapter: 'li span:last-child@text', intro: 'li:nth-child(2n+1)@text', status: 'li:first-child@text',
+    wordCount: 'a[href^=javascript:void]@text', kind: 'p:contains(作者:甲)@text##a##b##c'
+  }) });
+  const warnings = NativeSourceSpec.warningsOf(warned);
+  equal(warnings.length, 3, '纯数字 rate 配 batch 与两处不支持的伪类各一条');
+  equal(/rate 写成纯数字/.test(warnings[0]) && /toc\.batch/.test(warnings[0]), true, 'rate 提示指出受影响的 batch');
+  equal(warnings.slice(1).map((w) => w.split('：')[0]), ['search.fields.lastChapter', 'search.fields.intro'],
+    '伪类提示指出字段位置');
+  equal(NativeSourceSpec.warningsOf(sample), [], '示例书源没有提示');
+  equal(NativeSourceSpec.warningsOf({ sourceFormat: 'native' }), [], '定义不合法时不给提示（由校验报错）');
+
   const hidden = new NativeSourceRunner(definition, runHost, { mode: '不存在的值' });
   equal((await hidden.exploreMenus()).map((m) => m.title).includes('仅听书'), false, '非法变量值回退默认值');
 

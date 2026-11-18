@@ -727,6 +727,15 @@ export class NativeSourceRunner {
       url = NativeExpr.toText(await this.value(dynamic.target || '', scope.child().set('item', item)));
       menuItem = item;
     }
+    // 站点分页有固定上限（越界返回 404）时，到页就停，不再发请求；返回空列表宿主就认为到底了。
+    const maxPage = menu && menu.maxPage !== undefined ? menu.maxPage : explore.maxPage;
+    if (maxPage !== undefined && page > maxPage) {
+      if (this.host.trace) {
+        this.host.trace({ field: '发现请求', rule: `maxPage ${maxPage}`, type: 'limit', count: 0,
+          preview: `第 ${page} 页超过 maxPage，不再请求`, error: '' });
+      }
+      return [];
+    }
     if (!url) throw new NativeSourceError('发现分类没有可用的地址');
     const stage: NativeStageSpec = Object.assign({}, explore, {
       url: '= __url', headers: Object.assign({}, explore.headers || {}, menu && menu.headers ? menu.headers : {})
