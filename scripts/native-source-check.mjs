@@ -419,6 +419,24 @@ try {
   equal(chapters[0].tag.length > 0, true, '更新时间');
   equal((await runner.toc(book, 1)).length, 1, '目录条数上限');
 
+  // 章节更新时间与字数：updateTime、wordCount 与书籍字段同名，脚本返回同名键也能取到。
+  const timed = JSON.parse(JSON.stringify(sample));
+  timed.toc.fields = Object.assign({}, timed.toc.fields, { updateTime: '$.update_time', wordCount: '= 3630' });
+  delete timed.toc.fields.tag;
+  const timedChapters = await new NativeSourceRunner(NativeSourceSpec.fromObject(timed), runHost,
+    { mode: '听书', server: 'https://api.example.com/' }).toc(book);
+  equal([timedChapters[0].updateTime, timedChapters[0].wordCount, timedChapters[0].tag], ['1700000000', '3630', ''],
+    '章节 updateTime、wordCount');
+  if (mods.BookChapter) {
+    const meta = new mods.BookChapter();
+    meta.variable = JSON.stringify({ updateTime: '2017-09-27 10:45:05', wordCount: '3630' });
+    equal(mods.BookChapter.metaTextOf(meta), '2017-09-27 10:45:05 · 3630字', '目录第二行：时间原文、字数补“字”');
+    meta.variable = JSON.stringify({ wordCount: '约3千字' });
+    equal(mods.BookChapter.metaTextOf(meta), '约3千字', '只有字数');
+    meta.variable = JSON.stringify({ baseUrl: 'https://x' });
+    equal(mods.BookChapter.metaTextOf(meta), '', '没有时间和字数时为空');
+  }
+
   // nextUrl 一次给出多个地址：剩余目录页每批 4 页并发、按列出顺序解析，不跟随这些页自己的 nextUrl。
   const paged = JSON.parse(JSON.stringify(sample));
   paged.toc = {

@@ -191,6 +191,10 @@ export interface NativeChapterRecord {
   isPay: boolean;
   isVolume: boolean;
   tag: string;
+  /** 章节更新时间（文本或时间戳），存进章节变量 updateTime，目录里显示在章节名下方。 */
+  updateTime: string;
+  /** 章节字数，存进章节变量 wordCount。 */
+  wordCount: string;
 }
 
 export interface NativeMenuEntry {
@@ -303,7 +307,7 @@ const MENU_STATIC = 'native:menu:';
 /** 脚本阶段不写 fields 时，按同名键取值的字段。 */
 const BOOK_FIELD_NAMES = ['name', 'author', 'kind', 'intro', 'coverUrl', 'wordCount', 'lastChapter', 'updateTime',
   'status', 'bookUrl', 'tocUrl', 'type'];
-const CHAPTER_FIELD_NAMES = ['title', 'url', 'isVip', 'isPay', 'isVolume', 'tag'];
+const CHAPTER_FIELD_NAMES = ['title', 'url', 'isVip', 'isPay', 'isVolume', 'tag', 'updateTime', 'wordCount'];
 const STAGE_NAMES: Record<string, string> = {
   '搜索': 'search', '发现': 'explore', '详情': 'detail', '目录': 'toc', '正文': 'content', '发现分类': 'menus'
 };
@@ -852,8 +856,12 @@ export class NativeSourceRunner {
         isVip: NativeExpr.isTruthy((await this.value(fields['isVip'], itemScope, false, 'toc.fields.isVip'))),
         isPay: NativeExpr.isTruthy((await this.value(fields['isPay'], itemScope, false, 'toc.fields.isPay'))),
         isVolume: isVolume,
-        tag: NativeExpr.toText((await this.value(fields['tag'] || fields['updateTime'], itemScope, false,
-          'toc.fields.tag'))).trim()
+        tag: fields['tag'] === undefined ? '' :
+          NativeExpr.toText((await this.value(fields['tag'], itemScope, false, 'toc.fields.tag'))).trim(),
+        updateTime: fields['updateTime'] === undefined ? '' :
+          NativeExpr.toText((await this.value(fields['updateTime'], itemScope, false, 'toc.fields.updateTime'))).trim(),
+        wordCount: fields['wordCount'] === undefined ? '' :
+          NativeExpr.toText((await this.value(fields['wordCount'], itemScope, false, 'toc.fields.wordCount'))).trim()
       });
       if (chapters.length >= MAX_LIST_ITEMS || (limit > 0 && chapters.length >= limit)) return true;
     }

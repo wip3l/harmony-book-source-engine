@@ -867,7 +867,12 @@ export class NativeSourceService {
       chapter.isVip = record.isVip;
       chapter.isPay = record.isPay;
       chapter.variable = BookUrlResolver.setVariableJson(chapter.variable, 'baseUrl', record.url);
-      if (record.tag) chapter.variable = BookUrlResolver.setVariableJson(chapter.variable, 'updateTime', record.tag);
+      // tag 是早先放更新时间的字段，没写 updateTime 时沿用它。
+      const updateTime = record.updateTime || record.tag;
+      if (updateTime) chapter.variable = BookUrlResolver.setVariableJson(chapter.variable, 'updateTime', updateTime);
+      if (record.wordCount) {
+        chapter.variable = BookUrlResolver.setVariableJson(chapter.variable, 'wordCount', record.wordCount);
+      }
       if (pendingVolume) {
         chapter.variable = BookUrlResolver.setVariableJson(chapter.variable, 'volume', pendingVolume);
         pendingVolume = '';

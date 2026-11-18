@@ -304,6 +304,8 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 | `规则1&&规则2` | 把各规则的结果按顺序合并 | `.name@text&&.alias@text` |
 | `规则##正则##替换` | 先取值，再做全局正则替换；省略替换文本时删除匹配部分 | `$.author##^作者：`、`.status@text##^1$##连载` |
 
+要把占位值整个置空（例如站点给的默认封面 `/images/nocover.jpg`），让正则从头匹配到尾：`img.0@src##^.*nocover.*$##`。只写 `nocover.*` 时前面的 `/images/` 会留下来。
+
 原生书源的 `##` 可以串联多对，按顺序逐对做全局替换：`规则##正则1##替换1##正则2##替换2`；最后落单的一个正则表示删除匹配部分，例如 `.meta@text##^作者[:：]\s*####\s*·.*$` 先去掉“作者：”前缀、再去掉“·”之后的分类与状态（中间的 `####` 是“替换为空”加上下一对的开头）。结尾写 `###` 时仍是只处理首个命中的写法，不和串联混用。兼容书源保持阅读的语义，`##` 只接一对。短枚举值换成展示词用 `lookup` 更直观，见[内置函数](#内置函数)。
 
 正则按 Android 阅读的 Java 方言书写也可以（如 `(?i)`），会自动转换；`\d`、`\w` 按 Unicode 语义匹配，只要 ASCII 数字时写 `[0-9]`。替换文本里用 `$1` 引用分组。
@@ -844,7 +846,8 @@ function explore(ctx) {
 | `fields.title`、`fields.url` | 章节名与章节地址，必填 |
 | `fields.isVip`、`fields.isPay` | 布尔标记：VIP 章节、付费章节 |
 | `fields.isVolume` | 为真时该元素是分卷标题，不需要 `url`。它不占章节位置，目录会把卷名显示在它后面第一章的上方 |
-| `fields.tag` | 章节附加信息，一般放更新时间 |
+| `fields.updateTime`、`fields.wordCount` | 可选，章节更新时间与字数，和书籍字段同名同义。时间可以是文本（按原样显示），也可以是 10 位秒或 13 位毫秒时间戳；字数是纯数字时显示为“3630字”。参考宿主把它们显示在目录里章节名的下方 |
+| `fields.tag` | 早先放更新时间的字段，没写 `updateTime` 时当作 `updateTime` |
 | `nextUrl` | 目录分页地址，见下 |
 | `batch` | `nextUrl` 用列表写法时每批并发请求的页数，1 到 16 的整数，默认 4 |
 | `reverse` | 为 `true` 时把整个目录倒序（接口按最新在前返回时用） |
@@ -889,6 +892,14 @@ function explore(ctx) {
 | `imageDecode` | 漫画图片解密，见下 |
 | `links` | 正文末尾的按钮，见下 |
 | `comments` | 段评与章末评论入口，见下 |
+
+**正文文本怎么显示**：`text` 的结果，以及正文 `script` 返回的字符串，都按同一套规则变成阅读页的段落：
+
+- 按 HTML 片段处理：`<br>` 换行，`</p>`、`</div>` 分段，其他标签去掉、只留文字。
+- 纯文本里的换行照样保留，每行一段，所以“纯文本 + 换行符”和“`<p>` 段落串”都能正常分段；连续空行压成一个。
+- `<img>` 显示为插图，并带上 `mediaHeaders` 和 `imageDecode`；单独成行的图片地址（以及 `![](地址)`）也显示为插图，但不带这两项，需要时写成 `<img>`。
+- HTML 实体只还原 `&nbsp;` 和 `&amp;`。正文里有 `&lt;`、`&quot;`、`&#…;` 这类实体时，在规则里先用 `htmlDecode(…)` 还原，否则会按原样显示。
+- 行内连续的空格和制表符压成一个。
 
 #### 视频网页回退
 
@@ -1623,7 +1634,7 @@ fn sign(path, ts) {
 | 数组或对象 | 已解析的 JSON（`data`），JSONPath 照常可用 |
 | `page(原文, 地址)` | 原文加上它的地址，相对链接按这个地址补全 |
 
-为了少写样板：脚本阶段不写 `list` 时，返回数组的每一项就是一条结果；不写 `fields` 时按同名键取值（书籍取 `name`、`author`、`kind`、`intro`、`coverUrl`、`wordCount`、`lastChapter`、`updateTime`、`status`、`bookUrl`、`tocUrl`、`type`，章节取 `title`、`url`、`isVip`、`isPay`、`isVolume`、`tag`）。写了 `fields` 就要写全必填字段。正文不写 `text`、`images`、`audio`、`video` 时，返回字符串就是正文，返回对象时按书籍类型取同名键；视频专用接口还读取返回对象的 `videoPage`，详见[视频网页回退](#视频网页回退)。
+为了少写样板：脚本阶段不写 `list` 时，返回数组的每一项就是一条结果；不写 `fields` 时按同名键取值（书籍取 `name`、`author`、`kind`、`intro`、`coverUrl`、`wordCount`、`lastChapter`、`updateTime`、`status`、`bookUrl`、`tocUrl`、`type`，章节取 `title`、`url`、`isVip`、`isPay`、`isVolume`、`updateTime`、`wordCount`、`tag`）。写了 `fields` 就要写全必填字段。正文不写 `text`、`images`、`audio`、`video` 时，返回字符串就是正文，返回对象时按书籍类型取同名键；视频专用接口还读取返回对象的 `videoPage`，详见[视频网页回退](#视频网页回退)。
 
 - 可以写 `script` 的阶段：`search`、`explore`、`detail`、`toc`、`content`。写了 `script` 的阶段不用写 `url`；`toc` 和 `content` 的翻页由脚本自己处理，**不再跟随 `nextUrl`**。
 - 发现页的分类用 `menus` 声明（没有 `url` 的仍是分组标题），要在脚本里算出分类就用 [`dynamicMenus.script`](#发现-explore)。发现阶段写了 `script` 时，分类的 `url` 可以写任意标识，函数从 `ctx.url` 读到，`ctx.title` 是分类名，动态分类的条目在 `ctx.menu`。
@@ -2156,7 +2167,7 @@ const titles = cards.map(card => native.sel('@css:.title@text', card));
 | `detail` | 通用字段、`keep`、`fetch` |
 | `toc` | 通用字段、`nextUrl`、`batch`、`reverse`；`list`\*、`fields.title`\*、`fields.url`\* |
 | 书籍 `fields` | `name`、`author`、`kind`、`intro`、`coverUrl`、`wordCount`、`lastChapter`、`updateTime`、`status`、`bookUrl`、`tocUrl`、`type` |
-| 章节 `fields` | `title`、`url`、`isVip`、`isPay`、`isVolume`、`tag` |
+| 章节 `fields` | `title`、`url`、`isVip`、`isPay`、`isVolume`、`updateTime`、`wordCount`、`tag` |
 | `content` | 通用字段；`text`、`images`、`audio`、`video`、`videoPage`、`script`（至少一个）；`mediaError`、`mediaHeaders`、`replace`、`nextUrl`、`batch`、`fetch`、`imageDecode`、`links`、`comments`。仅网页播放须使用视频类型，见[视频网页回退](#视频网页回退) |
 | `fetch.名称` | 请求字段、`when` |
 | `content.replace[]` | `pattern`\*、`with`、`flags` |
