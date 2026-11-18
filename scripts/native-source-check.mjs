@@ -348,6 +348,24 @@ try {
   await rejectsWith(Promise.resolve().then(() => NativeSourceSpec.fromObject(badCap)),
     /explore\.maxPage 必须是 1 到 10000 的整数/, 'maxPage 必须是正整数');
 
+  // 顶层 charset 是所有请求的默认编码，阶段上写的优先。
+  const gbkSource = JSON.parse(JSON.stringify(pageCapped));
+  delete gbkSource.explore.maxPage;
+  gbkSource.charset = 'gbk';
+  gbkSource.explore.menus[1].maxPage = undefined;
+  gbkSource.explore.charset = 'utf-8';
+  const gbkHost = createTestHost(JsonPathEvaluator, respond);
+  const gbkRunner = new NativeSourceRunner(NativeSourceSpec.fromObject(gbkSource), gbkHost,
+    { server: 'https://api.example.com', mode: '听书' });
+  await gbkRunner.search('总裁', 1);
+  equal(gbkHost.requests[gbkHost.requests.length - 1].charset, 'gbk', '阶段没写 charset 时用顶层的');
+  await gbkRunner.explore((await gbkRunner.exploreMenus())[0].target, 1);
+  equal(gbkHost.requests[gbkHost.requests.length - 1].charset, 'utf-8', '阶段上写的 charset 优先');
+  const badCharset = JSON.parse(JSON.stringify(gbkSource));
+  badCharset.charset = 936;
+  await rejectsWith(Promise.resolve().then(() => NativeSourceSpec.fromObject(badCharset)), /charset 必须是字符串/,
+    '顶层 charset 必须是字符串');
+
   // 导入期提示：不拦截导入，只列出会静默失效的写法。
   const warned = JSON.parse(JSON.stringify(sample));
   warned.rate = 800;

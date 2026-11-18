@@ -79,6 +79,8 @@ export interface NativeScriptContext {
   background?: boolean;
   /** 脚本请求实际带的请求头：顶层 headers 按当前作用域求值，再叠上脚本给出的（同名以脚本为准）。 */
   requestHeaders: (own: Record<string, string>) => Promise<Record<string, string>>;
+  /** 书源顶层的 charset：脚本请求没写 charset 时用它。 */
+  charset?: string;
 }
 
 const BATCH = 8;
@@ -382,7 +384,7 @@ export class NativeScriptHost {
       webView: web === true || !!webSpec,
       webWaitFor: webSpec && webSpec['waitFor'] ? String(webSpec['waitFor']).trim() : '',
       webTimeout: Math.max(3, Math.min(Number(webSpec ? webSpec['timeout'] : 0) || 15, 60)),
-      charset: this.text(spec['charset']).trim(),
+      charset: this.text(spec['charset']).trim() || (this.context.charset || ''),
       retry: HttpRetryPolicy.parse(spec['retry']),
       timeoutMs: spec['timeout'] === undefined ? defaultTimeout : this.requestTimeout(spec['timeout']),
       primary: false

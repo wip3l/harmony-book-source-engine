@@ -1605,7 +1605,8 @@ export class NativeSourceRunner {
       emit: emit ?? undefined,
       interactive: interactive,
       background: background,
-      requestHeaders: (own: Record<string, string>): Promise<Record<string, string>> => this.requestHeaders(own, scope)
+      requestHeaders: (own: Record<string, string>): Promise<Record<string, string>> => this.requestHeaders(own, scope),
+      charset: String(this.definition.charset || '').trim()
     });
     const startedAt = Date.now();
     try {
@@ -1817,7 +1818,7 @@ export class NativeSourceRunner {
       webView: spec.webView === true || !!web,
       webWaitFor: web && web.waitFor ? String(web.waitFor).trim() : '',
       webTimeout: Math.max(3, Math.min(Number(web && web.timeout) || 15, 60)),
-      charset: String(spec.charset || '').trim(),
+      charset: String(spec.charset || this.definition.charset || '').trim(),
       retry: HttpRetryPolicy.parse(spec.retry),
       primary: primary
     };

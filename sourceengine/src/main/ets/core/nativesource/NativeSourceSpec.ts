@@ -321,6 +321,8 @@ export interface NativeSourceDefinition {
   enabledExplore?: boolean;
   rate?: string;
   headers?: Record<string, string>;
+  /** 所有请求参数与表单的默认编码，如 gbk；阶段（或脚本请求）上写的 charset 优先。 */
+  charset?: string;
   vars?: NativeVarSpec[];
   /** 函数库：用 fn 定义的纯计算函数，供表达式调用。 */
   lib?: string;
@@ -641,6 +643,9 @@ export class NativeSourceSpec {
       ['search', definition.search], ['explore', definition.explore], ['detail', definition.detail],
       ['toc', definition.toc], ['content', definition.content]
     ];
+    if (definition.charset !== undefined && typeof definition.charset !== 'string') {
+      errors.push('charset 必须是字符串，例如 "gbk"');
+    }
     for (const entry of stages) {
       if (entry[1] === undefined) continue;
       if (!entry[1] || typeof entry[1] !== 'object' || Array.isArray(entry[1])) {

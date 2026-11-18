@@ -532,7 +532,7 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 | `headers` | 本阶段附加的请求头（值可以是模板或表达式）。值为空的请求头不发送 |
 | `body` | 请求体。写成对象时其中的字符串按模板渲染，整体按 JSON 发送；写成文本时按模板渲染后原样发送 |
 | `webView` | 为 `true` 时用内置浏览器加载页面，取执行完网页自身脚本后的内容。可写成 `{ "waitFor": ".chapter-content", "timeout": 15 }`，等这个选择器对应的元素出现再取整页。`timeout` 单位为秒，默认 15，取值 3 到 60；到时间还没出现时按失败处理，提示“网页等待条件未满足”。只用于必须渲染才有数据的站点，比普通请求慢得多 |
-| `charset` | 请求参数和表单的编码，例如 `gbk`。要求搜索词按 GBK 编码的老站点需要它；响应的解码由应用自动识别，不用写 |
+| `charset` | 请求参数和表单的编码，例如 `gbk`。要求搜索词按 GBK 编码的老站点需要它；响应的解码由应用自动识别，不用写。整个站点都要 GBK 时写在书源顶层，作为所有请求（包括脚本里的 `http.*`）的默认值；个别请求要不同编码时在阶段上另写，阶段上的优先。地址里用 `{{key}}` 或 `{{urlencode(key)}}` 都可以，应用会先还原再按这个字符集编码，书源不用自己带 GBK 码表。参考宿主在系统编码器不支持 GBK 时改用内置码表，码表里没有的字编成 `?`；实在无法编码时报“当前系统无法按 gbk 编码请求参数”，不会把原文发出去 |
 | `retry` | 数字 0–3 保留原有重试语义；也可写条件退避对象，见下文“条件重试”。默认不重试 |
 | `script` | 由 `js` 里的函数代替请求，见[脚本阶段](#脚本阶段-script) |
 | `let` | 本阶段的派生值，拿到响应之后、取字段之前按书写顺序求值 |
@@ -1299,6 +1299,7 @@ blockquote { background: #f3f3f3; }
 | `enabled`、`enabledExplore` | 首次导入时是否启用、是否在发现页显示，默认都为 `true`。再次导入同一书源时保留用户在应用里的设置 |
 | `rate` | 限流。`次数/毫秒` 表示窗口内最多几次，例如 `"20/60000"`；纯数字是两次请求的最小间隔毫秒数，例如 `"1000"`。对整个书源的所有请求生效，并发抓目录页也要排队；纯数字间隔会让 N 页目录至少耗时 N × 间隔，`batch` 也不再起作用（同时写了 `batch` 时导入会提示），站点不限流时不要写。搜索时单个请求最多排队 60 秒 |
 | `headers` | 每个请求都带的请求头，值可以是模板或表达式，每次请求时求值，见[请求是怎么发出的](#请求是怎么发出的)。书源记录的 `header` 字段只保存其中的字面值，供应用的其他功能（如听书播放）使用 |
+| `charset` | 所有请求参数与表单的默认编码，例如 `"gbk"`；阶段或脚本请求上写的优先，见[通用字段](#通用字段) |
 | `coverHeaders` | 封面专用请求头，见[加密封面](#加密封面-coverdecode) |
 | `coverDecode` | 封面解密声明（AES 参数或 `js` 里的脚本函数），见[加密封面](#加密封面-coverdecode) |
 | `vars` | 书源变量，见下 |
@@ -2145,7 +2146,7 @@ const titles = cards.map(card => native.sel('@css:.title@text', card));
 
 | 位置 | 字段 |
 | --- | --- |
-| 顶层 | `sourceFormat`\*、`version`、`name`\*、`url`\*、`group`、`comment`、`type`、`enabled`、`enabledExplore`、`rate`、`headers`、`coverHeaders`、`coverDecode`、`vars`、`let`、`cache`、`login`、`actions`、`voices`、`lib`、`js`、`scriptLimits`、`search`、`explore`、`detail`、`toc`、`content` |
+| 顶层 | `sourceFormat`\*、`version`、`name`\*、`url`\*、`group`、`comment`、`type`、`enabled`、`enabledExplore`、`rate`、`headers`、`charset`、`coverHeaders`、`coverDecode`、`vars`、`let`、`cache`、`login`、`actions`、`voices`、`lib`、`js`、`scriptLimits`、`search`、`explore`、`detail`、`toc`、`content` |
 | 请求（各阶段、`cache`、`fetch`、`check`、`submit`、`actions`、`dynamicMenus`、`links[].request`、`comments.stats`） | `url`、`method`、`headers`、`body`、`webView`（`true` 或 `{ waitFor, timeout }`）、`charset`、`retry` |
 | 各阶段通用 | 请求字段、`script`、`let`、`fail`、`list`、`fields` |
 | `search` | 通用字段；`url`\*（或 `script`）、`list`\*、`fields.name`\*、`fields.bookUrl`\* |
@@ -2637,7 +2638,7 @@ Node 回归的宿主只支持 JSONPath，不验证 CSS/XPath、真机 QuickJS、
 | --- | --- |
 | `method` | HTTP 方法，默认 `GET`。 |
 | `body` | 字符串或对象；对象会 JSON 序列化。 |
-| `charset` | URL 查询和表单编码字符集，如 `utf-8`、`gbk`、`gb2312`、`gb18030`、`escape`。 |
+| `charset` | URL 查询和表单编码字符集，如 `utf-8`、`gbk`、`gb2312`、`gb18030`、`escape`。GBK 系在系统编码器不支持时改用内置码表，无法编码时报错；其他不认识的字符集按 UTF-8 编码。 |
 | `headers` | 本次请求头；同名项覆盖书源全局请求头。 |
 | `retry` | 响应不可用时的额外重试次数。 |
 | `type` | 声明负载类型。章节地址为 `data:` 且尾部选项声明了 `type` 时，正文阶段会把解码后的字节以十六进制文本提供给规则脚本，对齐 Android 阅读的字节串约定（脚本内通常用 `java.hexDecodeToString` 还原）。 |

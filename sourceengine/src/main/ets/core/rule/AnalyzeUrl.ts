@@ -6,6 +6,7 @@ import { VerificationSupport } from '../http/VerificationSupport';
 import { RequestSessionConfig, RequestSessionSupport } from '../http/RequestSessionSupport';
 import { BookSourceRateLimiter, RateLimitAcquireResult } from '../http/BookSourceRateLimiter';
 import { util } from '@kit.ArkTS';
+import { LegacyCharsetEncoder } from './LegacyCharsetEncoder';
 import { BookSourceDebugContext } from '../book/BookSourceDebugModels';
 import { BookSourceHeaderRuntime } from '../book/BookSourceHeaderRuntime';
 import { SourceEngineHost } from '../host/SourceEngineHost';
@@ -416,21 +417,23 @@ export class AnalyzeUrl {
   }
 
   private percentEncode(value: string, charset: string, form: boolean): string {
-    try {
-      const normalized = charset === 'gbk' || charset === 'gb2312' ? 'gb18030' : charset;
-      const bytes = new util.TextEncoder(normalized).encodeInto(value);
-      let result = '';
-      for (let i = 0; i < bytes.length; i++) {
-        const byte = bytes[i];
-        const ch = String.fromCharCode(byte);
-        if (/[A-Za-z0-9_.~-]/.test(ch) || (form && ch === '*')) result += ch;
-        else if (form && ch === ' ') result += '+';
-        else result += '%' + byte.toString(16).toUpperCase().padStart(2, '0');
-      }
-      return result;
-    } catch (_) {
-      return value;
+    // 系统编码器不认 GBK 时由 LegacyCharsetEncoder 用码表兜底；以前这里吞掉异常、把原文发出去，
+    // 站点按 GBK 解不出关键词，只会返回 0 条，看起来像“站里没有这本书”。
+    let bytes = LegacyCharsetEncoder.encode(value, charset);
+    if (!bytes) {
+      if (LegacyCharsetEncoder.isGb(charset)) throw new Error(`当前系统无法按 ${charset} 编码请求参数`);
+      console.warn(`[AnalyzeUrl] charset ${charset} unsupported, request parameters sent as UTF-8`);
+      bytes = new util.TextEncoder().encodeInto(value);
     }
+    let result = '';
+    for (let i = 0; i < bytes.length; i++) {
+      const byte = bytes[i];
+      const ch = String.fromCharCode(byte);
+      if (/[A-Za-z0-9_.~-]/.test(ch) || (form && ch === '*')) result += ch;
+      else if (form && ch === ' ') result += '+';
+      else result += '%' + byte.toString(16).toUpperCase().padStart(2, '0');
+    }
+    return result;
   }
 
   private safeDecode(value: string): string {
@@ -522,8 +525,10 @@ export class AnalyzeUrl {
       readTimeout: this.requestDeadlineAt > 0 ? Math.max(1, this.requestDeadlineAt - Date.now()) : undefined
     };
     if (this.config.rawBody && this.config.body) {
-      const charset = this.normalizeCharset(this.config.charset || 'utf-8');
-      request.bodyBytes = new util.TextEncoder(charset).encodeInto(this.config.body).buffer as ArrayBuffer;
+      const charset = this.config.charset || 'utf-8';
+      const bytes = LegacyCharsetEncoder.encode(this.config.body, charset);
+      if (!bytes) throw new Error(`当前系统无法按 ${charset} 编码请求体`);
+      request.bodyBytes = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
     }
     return request;
   }
@@ -760,12 +765,6 @@ export class AnalyzeUrl {
       if (!destinationScoped.includes(key.toLowerCase())) result[key] = headers[key];
     }
     return result;
-  }
-
-  private normalizeCharset(charset: string): string {
-    const value = (charset || '').toLowerCase().replace(/["']/g, '').trim();
-    if (value === 'gbk' || value === 'gb2312') return 'gb18030';
-    return value || 'utf-8';
   }
 
   private findOptionIndex(value: string): number {
