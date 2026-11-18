@@ -427,6 +427,32 @@ try {
     { mode: '听书', server: 'https://api.example.com/' }).toc(book);
   equal([timedChapters[0].updateTime, timedChapters[0].wordCount, timedChapters[0].tag], ['1700000000', '3630', ''],
     '章节 updateTime、wordCount');
+
+  // 图文 + 视频混排：书是 text，目录给视频章标 type: video，正文按章节类型取 text 或 video。
+  const mixed = NativeSourceSpec.fromObject({
+    sourceFormat: 'native', name: '混排', url: 'https://mix.example', type: 'text',
+    search: { url: '/s?q={{key}}', list: '$.list[*]', fields: { name: '$.name', bookUrl: '$.url' } },
+    toc: { list: '$.chapters[*]', fields: { title: '$.title', url: '$.url', type: "= $.video ? 'video' : 'text'" } },
+    content: { text: '$.text', video: '$.video' }
+  });
+  const mixedHost = createTestHost(JsonPathEvaluator, async (request) => request.url.includes('/toc') ?
+    { chapters: [{ title: '正文', url: '/a' }, { title: '正片 1', url: '/a?seg=1', video: true }] } :
+    { text: '第一段', video: 'https://cdn.example/1.m3u8' });
+  const mixedRunner = new NativeSourceRunner(mixed, mixedHost, {});
+  const mixedChapters = await mixedRunner.toc({ bookUrl: 'https://mix.example/toc', tocUrl: '', name: '书', author: '',
+    kind: '', type: 'text', vars: {} });
+  equal(mixedChapters.map((c) => c.type), ['text', 'video'], '目录给出章节类型');
+  const textPart = await mixedRunner.content({ bookUrl: 'https://mix.example/toc', type: 'text', vars: {} },
+    { url: 'https://mix.example/a', title: '正文', index: 0, type: 'text' });
+  equal([textPart.kind, textPart.text], ['text', '第一段'], '普通章节按书籍类型取正文');
+  const videoPart = await mixedRunner.content({ bookUrl: 'https://mix.example/toc', type: 'text', vars: {} },
+    { url: 'https://mix.example/a?seg=1', title: '正片 1', index: 1, type: 'video' }, true);
+  equal([videoPart.kind, videoPart.text], ['video', 'https://cdn.example/1.m3u8'], '视频章按 video 规则取');
+  if (mods.BookChapter) {
+    const typed = new mods.BookChapter();
+    typed.variable = JSON.stringify({ baseUrl: 'x', type: 'video' });
+    equal([mods.BookChapter.typeOf(typed), mods.BookChapter.isVideoChapter(typed)], ['video', true], '章节变量里的类型');
+  }
   if (mods.BookChapter) {
     const meta = new mods.BookChapter();
     meta.variable = JSON.stringify({ updateTime: '2017-09-27 10:45:05', wordCount: '3630' });

@@ -240,6 +240,23 @@ export class BookChapter {
    * 目录项第二行的文字：章节变量里的更新时间与字数（书源目录给了 updateTime、wordCount 时才有）。
    * 10 或 13 位纯数字的时间按秒或毫秒时间戳格式化，其余按原文；纯数字字数补“字”。
    */
+  /** 目录给出的章节类型（章节变量 type）；没有时为空串，按书籍类型处理。 */
+  static typeOf(chapter: BookChapter): string {
+    const variable = chapter ? chapter.variable : '';
+    if (!variable || variable.indexOf('"type"') < 0) return '';
+    try {
+      const parsed = JSON.parse(variable) as Record<string, Object>;
+      return String(parsed['type'] || '').trim().toLowerCase();
+    } catch (e) {
+      return '';
+    }
+  }
+
+  /** 图文书里的视频章：阅读页显示播放卡片，播放页只列这些章节。 */
+  static isVideoChapter(chapter: BookChapter): boolean {
+    return BookChapter.typeOf(chapter) === 'video';
+  }
+
   static metaTextOf(chapter: BookChapter): string {
     const variable = chapter ? chapter.variable : '';
     if (!variable || (variable.indexOf('"updateTime"') < 0 && variable.indexOf('"wordCount"') < 0)) return '';

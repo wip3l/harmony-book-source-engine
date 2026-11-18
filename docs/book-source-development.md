@@ -848,6 +848,7 @@ function explore(ctx) {
 | `fields.isVolume` | 为真时该元素是分卷标题，不需要 `url`。它不占章节位置，目录会把卷名显示在它后面第一章的上方 |
 | `fields.updateTime`、`fields.wordCount` | 可选，章节更新时间与字数，和书籍字段同名同义。时间可以是文本（按原样显示），也可以是 10 位秒或 13 位毫秒时间戳；字数是纯数字时显示为“3630字”。参考宿主把它们显示在目录里章节名的下方 |
 | `fields.tag` | 早先放更新时间的字段，没写 `updateTime` 时当作 `updateTime` |
+| `fields.type` | 可选，章节类型：`text`（默认）或 `video`。图文书里夹着视频时，把视频章标成 `video`，见[图文书里的视频章](#图文书里的视频章) |
 | `nextUrl` | 目录分页地址，见下 |
 | `batch` | `nextUrl` 用列表写法时每批并发请求的页数，1 到 16 的整数，默认 4 |
 | `reverse` | 为 `true` 时把整个目录倒序（接口按最新在前返回时用） |
@@ -900,6 +901,27 @@ function explore(ctx) {
 - `<img>` 显示为插图，并带上 `mediaHeaders` 和 `imageDecode`；单独成行的图片地址（以及 `![](地址)`）也显示为插图，但不带这两项，需要时写成 `<img>`。
 - HTML 实体只还原 `&nbsp;` 和 `&amp;`。正文里有 `&lt;`、`&quot;`、`&#…;` 这类实体时，在规则里先用 `htmlDecode(…)` 还原，否则会按原样显示。
 - 行内连续的空格和制表符压成一个。
+
+#### 图文书里的视频章
+
+一篇文章既有文字、图集，又夹着几段视频时，书的类型保持 `text`，在目录里把视频单独列成章节、标上 `type: video`，正文同时写 `text` 和 `video`：
+
+```json
+"toc": {
+  "list": "= concat([{ title: '正文', url: book.bookUrl }], map(range(len(selAll('.dplayer@data-config'))), i => ({ title: '正片 ' + (i + 1), url: book.bookUrl + '?seg=' + (i + 1), type: 'video' })))",
+  "fields": { "title": "$.title", "url": "$.url", "type": "= default($.type, 'text')" }
+},
+"content": {
+  "text": ".article@html",
+  "video": "= json(selAll('.dplayer@data-config')[int(match(baseUrl, 'seg=(\\d+)', 1)) - 1]).video.url"
+}
+```
+
+- 取正文时按章节类型分派：`type` 为 `video` 的章节按 `video`（和 `videoPage`）取，其余按书的类型取。规则里可以读 `chapter.type`。
+- 参考宿主的阅读页不请求视频章的正文，只排一页“本章是视频”的卡片，点“播放视频”进入播放页；在阅读目录里点视频章直接播放。翻页照常经过这张卡片，阅读进度不受影响；预读、缓存和朗读也只拿到这张卡片。
+- 播放页的选集只列这本书的视频章，连播也只在视频章之间。播放进度按章节单独记录，不改阅读进度。
+- 调试页照常请求视频章，可以直接核对 `video` 规则取到的地址。
+- 书的类型写成 `video` 时整本书直接进播放页，图文章节就看不到了，所以混排的书不要标 `video`。
 
 #### 视频网页回退
 
@@ -1634,7 +1656,7 @@ fn sign(path, ts) {
 | 数组或对象 | 已解析的 JSON（`data`），JSONPath 照常可用 |
 | `page(原文, 地址)` | 原文加上它的地址，相对链接按这个地址补全 |
 
-为了少写样板：脚本阶段不写 `list` 时，返回数组的每一项就是一条结果；不写 `fields` 时按同名键取值（书籍取 `name`、`author`、`kind`、`intro`、`coverUrl`、`wordCount`、`lastChapter`、`updateTime`、`status`、`bookUrl`、`tocUrl`、`type`，章节取 `title`、`url`、`isVip`、`isPay`、`isVolume`、`updateTime`、`wordCount`、`tag`）。写了 `fields` 就要写全必填字段。正文不写 `text`、`images`、`audio`、`video` 时，返回字符串就是正文，返回对象时按书籍类型取同名键；视频专用接口还读取返回对象的 `videoPage`，详见[视频网页回退](#视频网页回退)。
+为了少写样板：脚本阶段不写 `list` 时，返回数组的每一项就是一条结果；不写 `fields` 时按同名键取值（书籍取 `name`、`author`、`kind`、`intro`、`coverUrl`、`wordCount`、`lastChapter`、`updateTime`、`status`、`bookUrl`、`tocUrl`、`type`，章节取 `title`、`url`、`isVip`、`isPay`、`isVolume`、`updateTime`、`wordCount`、`tag`、`type`）。写了 `fields` 就要写全必填字段。正文不写 `text`、`images`、`audio`、`video` 时，返回字符串就是正文，返回对象时按书籍类型取同名键；视频专用接口还读取返回对象的 `videoPage`，详见[视频网页回退](#视频网页回退)。
 
 - 可以写 `script` 的阶段：`search`、`explore`、`detail`、`toc`、`content`。写了 `script` 的阶段不用写 `url`；`toc` 和 `content` 的翻页由脚本自己处理，**不再跟随 `nextUrl`**。
 - 发现页的分类用 `menus` 声明（没有 `url` 的仍是分组标题），要在脚本里算出分类就用 [`dynamicMenus.script`](#发现-explore)。发现阶段写了 `script` 时，分类的 `url` 可以写任意标识，函数从 `ctx.url` 读到，`ctx.title` 是分类名，动态分类的条目在 `ctx.menu`。
@@ -2167,7 +2189,7 @@ const titles = cards.map(card => native.sel('@css:.title@text', card));
 | `detail` | 通用字段、`keep`、`fetch` |
 | `toc` | 通用字段、`nextUrl`、`batch`、`reverse`；`list`\*、`fields.title`\*、`fields.url`\* |
 | 书籍 `fields` | `name`、`author`、`kind`、`intro`、`coverUrl`、`wordCount`、`lastChapter`、`updateTime`、`status`、`bookUrl`、`tocUrl`、`type` |
-| 章节 `fields` | `title`、`url`、`isVip`、`isPay`、`isVolume`、`updateTime`、`wordCount`、`tag` |
+| 章节 `fields` | `title`、`url`、`isVip`、`isPay`、`isVolume`、`updateTime`、`wordCount`、`tag`、`type` |
 | `content` | 通用字段；`text`、`images`、`audio`、`video`、`videoPage`、`script`（至少一个）；`mediaError`、`mediaHeaders`、`replace`、`nextUrl`、`batch`、`fetch`、`imageDecode`、`links`、`comments`。仅网页播放须使用视频类型，见[视频网页回退](#视频网页回退) |
 | `fetch.名称` | 请求字段、`when` |
 | `content.replace[]` | `pattern`\*、`with`、`flags` |

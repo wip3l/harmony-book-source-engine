@@ -182,6 +182,8 @@ export interface NativeChapterInput {
   url: string;
   title: string;
   index: number;
+  /** 目录给出的章节类型；video 表示图文书里的视频章，正文按 video 规则取。 */
+  type?: string;
 }
 
 export interface NativeChapterRecord {
@@ -195,6 +197,8 @@ export interface NativeChapterRecord {
   updateTime: string;
   /** 章节字数，存进章节变量 wordCount。 */
   wordCount: string;
+  /** 章节类型：空或 text 是普通章节，video 是图文书里的视频章。 */
+  type: string;
 }
 
 export interface NativeMenuEntry {
@@ -307,7 +311,7 @@ const MENU_STATIC = 'native:menu:';
 /** 脚本阶段不写 fields 时，按同名键取值的字段。 */
 const BOOK_FIELD_NAMES = ['name', 'author', 'kind', 'intro', 'coverUrl', 'wordCount', 'lastChapter', 'updateTime',
   'status', 'bookUrl', 'tocUrl', 'type'];
-const CHAPTER_FIELD_NAMES = ['title', 'url', 'isVip', 'isPay', 'isVolume', 'tag', 'updateTime', 'wordCount'];
+const CHAPTER_FIELD_NAMES = ['title', 'url', 'isVip', 'isPay', 'isVolume', 'tag', 'updateTime', 'wordCount', 'type'];
 const STAGE_NAMES: Record<string, string> = {
   '搜索': 'search', '发现': 'explore', '详情': 'detail', '目录': 'toc', '正文': 'content', '发现分类': 'menus'
 };
@@ -861,7 +865,9 @@ export class NativeSourceRunner {
         updateTime: fields['updateTime'] === undefined ? '' :
           NativeExpr.toText((await this.value(fields['updateTime'], itemScope, false, 'toc.fields.updateTime'))).trim(),
         wordCount: fields['wordCount'] === undefined ? '' :
-          NativeExpr.toText((await this.value(fields['wordCount'], itemScope, false, 'toc.fields.wordCount'))).trim()
+          NativeExpr.toText((await this.value(fields['wordCount'], itemScope, false, 'toc.fields.wordCount'))).trim(),
+        type: fields['type'] === undefined ? '' :
+          NativeExpr.toText((await this.value(fields['type'], itemScope, false, 'toc.fields.type'))).trim().toLowerCase()
       });
       if (chapters.length >= MAX_LIST_ITEMS || (limit > 0 && chapters.length >= limit)) return true;
     }
@@ -939,7 +945,9 @@ export class NativeSourceRunner {
   async content(book: NativeBookInput, chapter: NativeChapterInput,
     allowVideoPage: boolean = false): Promise<NativeContentResult> {
     const stage = this.scriptedContent(this.requireStage(this.definition.content, '正文'));
-    const bookType = String(book.type || this.definition.type || 'text').toLowerCase();
+    // 图文书里的视频章（目录标了 type: video）按视频取，其余章节仍按书籍类型。
+    const chapterType = String(chapter.type || '').toLowerCase();
+    const bookType = chapterType === 'video' ? 'video' : String(book.type || this.definition.type || 'text').toLowerCase();
     const kind = bookType === 'video' && (stage.video || stage.videoPage) ? 'video' : (bookType === 'audio' && stage.audio ? 'audio' :
       ((bookType === 'comic' || bookType === 'image') && stage.images ? 'images' :
         (stage.text ? 'text' : (stage.images ? 'images' : (stage.audio ? 'audio' : 'video')))));

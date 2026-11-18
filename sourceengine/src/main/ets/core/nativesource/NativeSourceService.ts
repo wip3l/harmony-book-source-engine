@@ -873,6 +873,9 @@ export class NativeSourceService {
       if (record.wordCount) {
         chapter.variable = BookUrlResolver.setVariableJson(chapter.variable, 'wordCount', record.wordCount);
       }
+      if (record.type && record.type !== 'text') {
+        chapter.variable = BookUrlResolver.setVariableJson(chapter.variable, 'type', record.type);
+      }
       if (pendingVolume) {
         chapter.variable = BookUrlResolver.setVariableJson(chapter.variable, 'volume', pendingVolume);
         pendingVolume = '';
@@ -886,14 +889,14 @@ export class NativeSourceService {
   static async getVideoContent(source: BookSource, http: HttpClient, book: Book, chapter: BookChapter,
     cancelled: () => boolean, interactive: () => boolean = (): boolean => true): Promise<NativeContentResult> {
     return await NativeSourceService.runner(source, http, cancelled, 0, null, interactive).content(
-      NativeSourceService.bookInput(source, book), { url: chapter.url, title: chapter.title, index: chapter.index }, true);
+      NativeSourceService.bookInput(source, book), { url: chapter.url, title: chapter.title, index: chapter.index, type: BookChapter.typeOf(chapter) }, true);
   }
 
   static async getContent(source: BookSource, http: HttpClient, book: Book, chapter: BookChapter,
     cancelled: () => boolean, debugContext: BookSourceDebugContext | null = null,
     interactive: () => boolean = (): boolean => true): Promise<NativeContentResult> {
     const result = await NativeSourceService.runner(source, http, cancelled, 0, debugContext, interactive).content(
-      NativeSourceService.bookInput(source, book), { url: chapter.url, title: chapter.title, index: chapter.index });
+      NativeSourceService.bookInput(source, book), { url: chapter.url, title: chapter.title, index: chapter.index, type: BookChapter.typeOf(chapter) });
     if (result.kind === 'text') result.text = NativeSourceService.withCommentMarkers(result);
     // 图片和音频要带请求头、图片要解密时，沿用应用已有的写法：地址后面跟一个选项对象。
     const hasHeaders = Object.keys(result.mediaHeaders).length > 0;
@@ -924,7 +927,7 @@ export class NativeSourceService {
     try {
       const result = await Promise.race([
         runner.commentPage(NativeSourceService.bookInput(source, book),
-          { url: chapter.url, title: chapter.title, index: chapter.index }, action),
+          { url: chapter.url, title: chapter.title, index: chapter.index, type: BookChapter.typeOf(chapter) }, action),
         new Promise<NativeCommentPage>((_resolve, reject): void => {
           timer = setTimeout((): void => reject(new Error('评论页面生成超过 15 秒')), 15000);
         })
