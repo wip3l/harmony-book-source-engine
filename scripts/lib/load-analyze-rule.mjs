@@ -107,7 +107,10 @@ function rewrite(text, rel, queue) {
     });
 }
 
-/** 暂存并加载 AnalyzeRule 及其依赖，返回 { AnalyzeRule, RuleExecutionTarget, ..., cleanup }。 */
+/**
+ * 暂存并加载 AnalyzeRule 及其依赖，返回 { AnalyzeRule, RuleExecutionTarget, ..., load, cleanup }。
+ * load(rel) 按源码根相对路径导入已暂存的其他模块（例如 'core/rule/JsRuntime.ts'）。
+ */
 export async function loadAnalyzeRule() {
   const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'analyze-rule-check-'));
   const cleanup = () => fs.rmSync(stagingDir, { recursive: true, force: true });
@@ -125,7 +128,7 @@ export async function loadAnalyzeRule() {
       fs.writeFileSync(target, rewrite(fs.readFileSync(locateEtsModule(rel), 'utf8'), rel, queue));
     }
     const load = (rel) => import(pathToFileURL(path.join(stagingDir, rel)).href);
-    return { ...(await load(entry)), ...(await load('core/rule/RuleValue.ts')), stagedFiles: seen.size, cleanup };
+    return { ...(await load(entry)), ...(await load('core/rule/RuleValue.ts')), stagedFiles: seen.size, load, cleanup };
   } catch (error) {
     cleanup();
     throw error;
