@@ -62,6 +62,9 @@ export class AnalyzeRule {
   private noticeSourceName: string = '';
   // 原生书源的 `##` 可以串联多对，见 applyProcessor；兼容书源不开。
   private chainReplacements: boolean = false;
+  // 主线程上同步执行的截止时间，见 setDeadline；0 表示不限。
+  private deadlineAt: number = 0;
+  private deadlineHit: boolean = false;
 
   constructor(content: string = '', baseUrl: string = '', ctx?: RuleContext) {
     this.content = content;
@@ -71,6 +74,23 @@ export class AnalyzeRule {
     this.bindCookieSource();
     this.js.setVar('baseUrl', baseUrl);
     this.scriptEngine = new ScriptEngine(this.js);
+  }
+
+  /**
+   * Bounds this rule's synchronous work on the main thread. Rule evaluation cannot yield midway, so a list rule that
+   * runs JS on every element (`…@js:…`) over a large page could block past HarmonyOS' 6-second freeze kill. Once the
+   * deadline passes, every further JS evaluation returns '' at once, so per-element loops finish quickly; the caller
+   * checks deadlineExceeded() and reports the source as failed instead of using the partial list.
+   */
+  setDeadline(ms: number): AnalyzeRule {
+    this.deadlineAt = ms > 0 ? Date.now() + ms : 0;
+    this.deadlineHit = false;
+    return this;
+  }
+
+  /** True when setDeadline's budget ran out and at least one JS evaluation was skipped. */
+  deadlineExceeded(): boolean {
+    return this.deadlineHit;
   }
 
   setContent(c: string): AnalyzeRule { this.content = c; return this; }
@@ -2269,6 +2289,10 @@ export class AnalyzeRule {
 
   private evalResultJs(jsCode: string, value: string): string {
     if (!jsCode) return value;
+    if (this.deadlineAt > 0 && Date.now() > this.deadlineAt) {
+      this.deadlineHit = true;
+      return '';
+    }
     const env = this.scriptEnv();
     const engineValue = this.scriptEngine.evalResultJs(jsCode, value, env);
     this.reportScriptToast(env);

@@ -137,6 +137,27 @@ try {
     if (value !== expected) throw new Error(`行尾归一化不对：${JSON.stringify(html)} => ${JSON.stringify(value)}`);
   }
 
+  // 主线程截止时间：过期后 JS 不再执行（各条路径都经 evalResultJs），调用方据 deadlineExceeded() 判定失败；
+  // 没设或未过期时不受影响。
+  const listHtml = `<ul>${Array.from({ length: 30 }, (_, i) => `<li>第${i}本</li>`).join('')}</ul>`;
+  const listRule = '@js:result';
+  const unbounded = new AnalyzeRule(listHtml, BASE_URL);
+  unbounded.execute(listRule, RuleExecutionTarget.ELEMENTS);
+  assertions++;
+  if (unbounded.deadlineExceeded()) throw new Error('没设截止时间时不应判定超时');
+  const roomy = new AnalyzeRule(listHtml, BASE_URL).setDeadline(60000);
+  roomy.execute(listRule, RuleExecutionTarget.ELEMENTS);
+  assertions++;
+  if (roomy.deadlineExceeded()) throw new Error('截止时间充裕时不应判定超时');
+  const expired = new AnalyzeRule(listHtml, BASE_URL).setDeadline(1);
+  const waitUntil = Date.now() + 5;
+  while (Date.now() < waitUntil) { /* 让截止时间过去 */ }
+  expired.execute(listRule, RuleExecutionTarget.ELEMENTS);
+  assertions++;
+  if (!expired.deadlineExceeded()) throw new Error('截止时间过后执行逐条 JS 应判定超时');
+  assertions++;
+  if (expired.setDeadline(0).deadlineExceeded()) throw new Error('重新设置截止时间应清掉超时标记');
+
   // :first-child / :first-of-type 按序号 1 处理；:last-child 仍不支持（取空，原生书源导入时提示）。
   const siblings = '<div><p class="m"><i>x</i><span>a</span><span>b</span></p><ul><li>1</li><li>2</li></ul></div>';
   for (const [rule, expected] of [['p.m span:first-child@text', []], ['p.m i:first-child@text', ['x']],
