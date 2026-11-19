@@ -536,6 +536,7 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 | `webView` | 为 `true` 时用内置浏览器加载页面，取执行完网页自身脚本后的内容。可写成 `{ "waitFor": ".chapter-content", "timeout": 15 }`，等这个选择器对应的元素出现再取整页。`timeout` 单位为秒，默认 15，取值 3 到 60；到时间还没出现时按失败处理，提示“网页等待条件未满足”。只用于必须渲染才有数据的站点，比普通请求慢得多 |
 | `charset` | 请求参数和表单的编码，例如 `gbk`。要求搜索词按 GBK 编码的老站点需要它；响应的解码由应用自动识别，不用写。整个站点都要 GBK 时写在书源顶层，作为所有请求（包括脚本里的 `http.*`）的默认值；个别请求要不同编码时在阶段上另写，阶段上的优先。地址里用 `{{key}}` 或 `{{urlencode(key)}}` 都可以，应用会先还原再按这个字符集编码，书源不用自己带 GBK 码表。参考宿主在系统编码器不支持 GBK 时改用内置码表，码表里没有的字编成 `?`；实在无法编码时报“当前系统无法按 gbk 编码请求参数”，不会把原文发出去 |
 | `retry` | 数字 0–3 保留原有重试语义；也可写条件退避对象，见下文“条件重试”。默认不重试 |
+| `rate` | 这个阶段自己的限流，写法同[顶层 `rate`](#原生书源的顶层字段)，见下文“限流” |
 | `script` | 由 `js` 里的函数代替请求，见[脚本阶段](#脚本阶段-script) |
 | `let` | 本阶段的派生值，拿到响应之后、取字段之前按书写顺序求值 |
 | `fail` | 求值结果非空（且不是 `false`）时视为接口报错，文本即展示给用户的错误信息，例如 `= data.code != 0 ? data.msg : ''` |
@@ -548,7 +549,15 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 - **请求头**：顶层 `headers` 加上本阶段（或分类、附加请求、脚本 `http.*`）的请求头，同名（不区分大小写）时本阶段优先。顶层 `headers` 在每个请求上按当时的作用域求值，可以写模板和表达式，例如 `"Authorization": "{{auth}}"`；值为空的不发送，本阶段同名请求头求值为空时仍发顶层的值。取 `cache` 的请求求值较早，引用 `let` 或缓存名的顶层请求头在这一步不带，见[复用的值](#复用的值-cache)。顶层请求头求值出错时报“规则 headers.名称 出错”。
 - **Content-Type**：POST 请求没有显式写 `Content-Type` 时，请求体以 `{` 开头的按 `application/json; charset=utf-8` 发送，其余按 `application/x-www-form-urlencoded` 发送。
 - **Cookie**：没有显式写 `Cookie` 请求头时，自动带上该站点已保存的 Cookie（网页登录、验证页、脚本 `cookie.set` 写入的都在这里）。响应里的 `Set-Cookie` 会自动保存。
-- **限流**：顶层 `rate` 对这个书源的所有请求生效，见[顶层字段](#原生书源的顶层字段)。
+- **限流**：顶层 `rate` 对这个书源的所有请求生效，见[顶层字段](#原生书源的顶层字段)。目录要慢、正文要快这类情况，在 `search`、`explore`、`detail`、`toc`、`content` 上另写 `rate`：这个阶段的请求（主请求、翻页、`fetch`、评论等附加请求，以及这个阶段脚本里的 `http.*` 和 `browser.render`）按阶段自己的窗口排队，不占顶层的名额；写 `0` 表示这个阶段不限流；没写的阶段沿用顶层。发现分类（`dynamicMenus`）算发现阶段；登录、按钮、`cache` 不属于任何阶段，总按顶层。各阶段分开排队后，站点实际收到的请求频率是几个窗口相加。写法不对（例如 `"fast"`）时导入报“toc.rate 写法不对”。
+
+```json
+"rate": "2/1000",
+"toc": { "rate": "8/1000", "url": "…", "nextUrl": "…", "batch": 8 },
+"content": { "url": "{{chapter.url}}", "text": "…" }
+```
+
+上例目录每秒最多 8 个请求、并发翻页照常生效，正文和其他阶段按顶层每秒 2 个。
 - **验证页**：各阶段的主请求如果拿到的是人机验证页或登录拦截页，应用提示「去验证」，用户在内置浏览器里完成后重试。附加请求（`fetch`、`comments.stats`、`cache`）不触发这个流程。
 - **网络错误**：请求没有发出去或没有响应（域名解析失败、超时、连接被拒等）时，直接把原因报给用户，例如“网络连接超时”，不会误报“需要登录或网页验证”。
 - **失败**：主请求失败（非 2xx、空响应）时整个阶段失败，提示“搜索请求失败（HTTP 403）”这类原因。
@@ -1330,7 +1339,7 @@ blockquote { background: #f3f3f3; }
 | `group`、`comment` | 分组与说明，显示在书源管理里 |
 | `type` | 默认媒体类型：`text`（默认）、`audio`、`comic`（或 `image`）、`video`，见[媒体类型](#媒体类型) |
 | `enabled`、`enabledExplore` | 首次导入时是否启用、是否在发现页显示，默认都为 `true`。再次导入同一书源时保留用户在应用里的设置 |
-| `rate` | 限流。`次数/毫秒` 表示窗口内最多几次，例如 `"20/60000"`；纯数字是两次请求的最小间隔毫秒数，例如 `"1000"`。对整个书源的所有请求生效，并发抓目录页也要排队；纯数字间隔会让 N 页目录至少耗时 N × 间隔，`batch` 也不再起作用（同时写了 `batch` 时导入会提示），站点不限流时不要写。搜索时单个请求最多排队 60 秒 |
+| `rate` | 限流。`次数/毫秒` 表示窗口内最多几次，例如 `"20/60000"`；纯数字是两次请求的最小间隔毫秒数，例如 `"1000"`。对整个书源的所有请求生效，并发抓目录页也要排队；纯数字间隔会让 N 页目录至少耗时 N × 间隔，`batch` 也不再起作用（同时写了 `batch` 时导入会提示），站点不限流时不要写。搜索时单个请求最多排队 60 秒。各阶段可以另写自己的 `rate` 覆盖这里，见[请求是怎么发出的](#请求是怎么发出的) |
 | `headers` | 每个请求都带的请求头，值可以是模板或表达式，每次请求时求值，见[请求是怎么发出的](#请求是怎么发出的)。书源记录的 `header` 字段只保存其中的字面值，供应用的其他功能（如听书播放）使用 |
 | `charset` | 所有请求参数与表单的默认编码，例如 `"gbk"`；阶段或脚本请求上写的优先，见[通用字段](#通用字段) |
 | `coverHeaders` | 封面专用请求头，见[加密封面](#加密封面-coverdecode) |
@@ -1667,7 +1676,7 @@ fn sign(path, ts) {
 
 | 接口 | 说明 |
 |---|---|
-| `http.get(地址, 选项?)`、`http.post(地址, 请求体, 选项?)`、`http.request({ url, method, headers, body, charset, retry, webView, timeout })` | 同步发请求，返回 `{ ok, status, statusCodeAvailable, body, url, finalUrl, error, errorCode, errorStage, headers, headersAvailable, requestId }`，`json()` 解析正文（不是 JSON 时抛错）。相对地址按书源地址补全，也接受 `data:` 地址；请求体是对象时按 JSON 发送并自动加 `Content-Type: application/json`。请求失败不抛错，看 `ok` 和 `status`。`headers` 键名为小写，同名多值用逗号加空格连接，`set-cookie` 多行用换行连接；`headersAvailable` 为 false 时表示未取得响应头（例如 WebView DOM、网络失败），不能据空对象断言服务器没有该头。4xx/5xx 也保留可观测响应头。Cookie 继续自动保存 |
+| `http.get(地址, 选项?)`、`http.post(地址, 请求体, 选项?)`、`http.request({ url, method, headers, body, charset, retry, webView, timeout, responseType })` | 同步发请求，返回 `{ ok, status, statusCodeAvailable, body, url, finalUrl, error, errorCode, errorStage, headers, headersAvailable, requestId }`，`json()` 解析正文（不是 JSON 时抛错）。相对地址按书源地址补全，也接受 `data:` 地址；请求体是对象时按 JSON 发送并自动加 `Content-Type: application/json`。请求失败不抛错，看 `ok` 和 `status`。`headers` 键名为小写，同名多值用逗号加空格连接，`set-cookie` 多行用换行连接；`headersAvailable` 为 false 时表示未取得响应头（例如 WebView DOM、网络失败），不能据空对象断言服务器没有该头。4xx/5xx 也保留可观测响应头。Cookie 继续自动保存。`responseType: 'bytes'` 时按原始字节取，结果在 `response.bytes`（`Uint8Array`，不可枚举），`body` 为空串，见下文“取原始字节” |
 | `http.all([请求, …], { concurrency, timeout, failOnPartial }?)` | 按顺序返回。每项可以是地址或请求对象；默认最多 8 个并发，`concurrency` 可设 1–8 的整数，完成一项就补下一项。`timeout` 为每项的默认超时，可由请求对象中的同名字段覆盖。默认返回全部逐项结果；`failOnPartial: true` 在整批完成且任一项失败时抛错，报告成功数、失败数和从 0 开始的失败索引。取消/超预算仍立即报错 |
 | `vars.get(名)`、`vars.set(名, 值)` | 书源变量，写入后保存（和书源设置页是同一份），可以写没有在 `vars` 里声明的键 |
 | `temp.get(名)`、`temp.set(名, 值)` | 当前 `NativeSourceRunner` 实例内的临时值；参考宿主按操作创建运行器，不能依赖它把详情数据传给后续目录操作 |
@@ -1736,6 +1745,28 @@ const responses = http.all([
 以上新增耗时、等待阶段和快照字段以包含 2026-10-29 抓取稳定性修复的宿主为准；不能仅凭相同版本号推定支持。检查字段存在性请用 `Object.prototype.hasOwnProperty.call(r, 'statusCodeAvailable')`，不要把 false 或空字符串当作“字段缺失”。
 
 `browser.render` 成功仍返回字符串；失败仍抛出 Error，包含 `errorCode`、`errorStage`、`waitStage`、`requestId`、三个耗时字段和快照标记；`e.response` 为完整失败响应。错误未被脚本捕获时，文案中也保留分类信息。不要在日志中输出完整快照、Cookie 或认证信息。
+
+### 取原始字节
+
+`http.get`、`http.request`、`http.all` 的每一项都可以加 `responseType: 'bytes'`，取字体、图片、压缩包这类二进制文件。默认的 `'text'` 会按文本解码，二进制内容会被弄坏。
+
+```js
+function content(ctx) {
+  const page = http.get(ctx.chapter.url);
+  const font = http.get(native.sel('@css:.chapter@data-font', page.body), { responseType: 'bytes' });
+  if (!font.ok) throw new Error('字体下载失败：HTTP ' + font.status);
+  const bytes = font.bytes;                        // Uint8Array
+  const tables = (bytes[4] << 8) | bytes[5];       // TTF 表头里的表数量
+  log('字体 ' + bytes.length + ' 字节，' + tables + ' 张表');
+  return page.body;
+}
+```
+
+- 请求照常经过书源请求层：顶层与本次请求头、Cookie、`charset`、`retry`、`timeout`、顶层或阶段的 `rate` 都生效，失败不抛错，看 `ok` 和 `status`。
+- 成功时 `bytes` 是 `Uint8Array`，`body` 是空串；失败时 `bytes` 为空数组。`bytes` 不可枚举，把整个响应当返回值时不会把字节写进结果。
+- 单个响应最多 8 MiB，按实际字节数计入脚本累计 16 MiB 的上限。字节经 Base64 交给脚本再还原，几 MB 的文件还原要占用一部分 2 秒计算预算。
+- 不能与 `webView` 同用，也不支持 `data:` 地址（内嵌数据可用 `base64Bytes` 自行解码）；`browser.render` 仍只返回文本。
+- 不做验证页判断：字节响应不是网页，拿到验证页时 `status` 照实返回。
 
 
 ### 读取响应头与关联请求
@@ -2123,7 +2154,8 @@ const titles = cards.map(card => native.sel('@css:.title@text', card));
 
 | 提示 | 原因与处理 |
 | --- | --- |
-| rate 写成纯数字……会让 toc.batch / content.batch 的并发失效 | 纯数字是两次请求的最小间隔，分页只能逐页排队，`batch` 不起作用。站点要限流时写成“次数/毫秒”，例如 `"8/1000"`；不限流就不写 |
+| rate 写成纯数字……会让 toc.batch / content.batch 的并发失效 | 纯数字是两次请求的最小间隔，分页只能逐页排队，`batch` 不起作用。站点要限流时写成“次数/毫秒”，例如 `"8/1000"`；不限流就不写。阶段写了自己的 `rate` 时按阶段的判断，提示里写作 `toc.rate` |
+| toc.rate 写法不对 | 阶段的 `rate` 只认“次数/毫秒”、毫秒间隔或 `0`，写成文字或对象时导入失败 |
 | 选择器里的 :last-child 等不受支持，会静默取空 | 换成支持的写法，见[选择器规则](#选择器规则)：取第几个用 `:eq(n)`、`:first`、`:last` 或索引 `.0`、`.-1` |
 
 编辑页把提示列在编辑框上方，有提示时第一次点「保存」只显示提示，确认后再点一次才保存；导入时只弹出第一条。
@@ -2181,7 +2213,7 @@ const titles = cards.map(card => native.sel('@css:.title@text', card));
 | --- | --- |
 | 顶层 | `sourceFormat`\*、`version`、`name`\*、`url`\*、`group`、`comment`、`type`、`enabled`、`enabledExplore`、`rate`、`headers`、`charset`、`coverHeaders`、`coverDecode`、`vars`、`let`、`cache`、`login`、`actions`、`voices`、`lib`、`js`、`scriptLimits`、`search`、`explore`、`detail`、`toc`、`content` |
 | 请求（各阶段、`cache`、`fetch`、`check`、`submit`、`actions`、`dynamicMenus`、`links[].request`、`comments.stats`） | `url`、`method`、`headers`、`body`、`webView`（`true` 或 `{ waitFor, timeout }`）、`charset`、`retry` |
-| 各阶段通用 | 请求字段、`script`、`let`、`fail`、`list`、`fields` |
+| 各阶段通用 | 请求字段、`script`、`let`、`fail`、`list`、`fields`、`rate` |
 | `search` | 通用字段；`url`\*（或 `script`）、`list`\*、`fields.name`\*、`fields.bookUrl`\* |
 | `explore` | 通用字段、`menus`、`dynamicMenus`（至少一个）、`maxPage` |
 | `explore.menus[]` | `title`\*、`url`、`when`、`headers`、`method`、`body`、`list`、`fields`、`maxPage` |

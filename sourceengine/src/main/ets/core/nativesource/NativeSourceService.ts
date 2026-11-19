@@ -43,6 +43,8 @@ import type { NativeBrowserResult } from './NativeSourceInteraction';
 import type { NativeScriptEngine } from './NativeScriptHost';
 import { BookSourceRuntimeStore } from '../book/BookSourceRuntimeStore';
 import { deviceInfo } from '@kit.BasicServicesKit';
+import { util } from '@kit.ArkTS';
+import { MAX_BINARY_RESPONSE_BYTES } from './NativeScriptHost';
 import { SourceEngineHost } from '../host/SourceEngineHost';
 import { NativePureRule } from './NativePureRule';
 
@@ -156,6 +158,32 @@ class NativeHost implements NativeRunnerHost {
     return await analyzeUrl.fetchPrepared(webRequest);
   }
 
+  /**
+   * 脚本的 responseType: 'bytes'：经同一请求层（书源请求头、Cookie、限流、重试）取原始字节，Base64 后交给脚本，
+   * 前置脚本再换成 Uint8Array。不做验证页判断：字节响应不是网页。
+   */
+  private async fetchBinary(analyzeUrl: AnalyzeUrl, url: string, request: NativeRequest): Promise<NativeResponse> {
+    const limit = this.maxResponseBytes > 0 ? Math.min(this.maxResponseBytes, MAX_BINARY_RESPONSE_BYTES) :
+      MAX_BINARY_RESPONSE_BYTES;
+    const response = await analyzeUrl.fetchBinary(url, limit);
+    const headers = HttpHeaderValues.normalize(response.headers || {});
+    const headersAvailable = Object.keys(headers).length > 0;
+    if (!response.success) {
+      const networkReason = response.statusCode === 0 ? NetworkErrorText.describe(response.error || '', request.url) : '';
+      return {
+        ok: false, status: response.statusCode, statusCodeAvailable: response.statusCode > 0, body: '', bodyBase64: '',
+        url: request.url, finalUrl: response.finalUrl || '', headers: headers, headersAvailable: headersAvailable,
+        error: networkReason || response.error || (response.statusCode > 0 ? `HTTP ${response.statusCode}` : '请求失败')
+      };
+    }
+    return {
+      ok: true, status: response.statusCode, statusCodeAvailable: response.statusCode > 0, body: '',
+      bodyBase64: response.data.length > 0 ? new util.Base64Helper().encodeToStringSync(response.data) : '',
+      url: response.finalUrl || response.url || request.url, finalUrl: response.finalUrl || '',
+      headers: headers, headersAvailable: headersAvailable, error: ''
+    };
+  }
+
   async fetch(request: NativeRequest): Promise<NativeResponse> {
     if (this.cancelled()) return { ok: false, status: 0, body: '', url: request.url, error: '已取消' };
     if (this.operationDeadline) {
@@ -176,7 +204,9 @@ class NativeHost implements NativeRunnerHost {
     // 顶层 headers 已由运行器按作用域求值并放进 request.headers，书源记录里的字面值副本不再重复合并。
     const analyzeUrl = new AnalyzeUrl(this.source, this.http).setCancelCheck(this.cancelled).setStaticSourceHeader(false)
       .setRequestTimeout(request.timeoutMs || 0)
-      .setRetryPolicy(typeof request.retry === 'object' ? request.retry : null);
+      .setRetryPolicy(typeof request.retry === 'object' ? request.retry : null)
+      .setStageRate(request.stageRate || null);
+    if (request.binary) return await this.fetchBinary(analyzeUrl, url, request);
     const response = request.webView && (request.webWaitFor || request.webJs) ?
       await this.fetchWaitingFor(analyzeUrl, url, request) :
       await analyzeUrl.fetch(url, this.maxResponseBytes > 0 ? this.maxResponseBytes : undefined, this.debugContext);

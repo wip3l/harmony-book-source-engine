@@ -5,6 +5,7 @@
  */
 
 import { CooperativeScheduler } from '../concurrency/CooperativeScheduler';
+import type { BookSourceStageRate } from '../http/BookSourceRateLimiter';
 import { HttpRetryPolicy } from '../http/HttpRetryPolicy';
 import type { HttpRetrySpec } from '../http/HttpRetryPolicy';
 import { NativeExpr, NativeExprError, NativeScope } from './NativeExpr';
@@ -40,6 +41,10 @@ export interface NativeRequest {
   primary: boolean;
   /** 网页渲染后在页面里执行的表达式（脚本的 browser.render），结果作为响应正文。 */
   webJs?: string;
+  /** 所在阶段写了自己的 rate：按这个阶段单独排队，不占顶层 rate 的名额。没写时不带，沿用顶层。 */
+  stageRate?: BookSourceStageRate;
+  /** 脚本请求写了 responseType: 'bytes'：取原始字节，结果放在 NativeResponse.bodyBase64。 */
+  binary?: boolean;
 }
 
 export interface NativeLoginState {
@@ -70,6 +75,8 @@ export interface NativeResponse {
   headersAvailable?: boolean;
   requestId?: string;
   error: string;
+  /** binary 请求的响应字节（Base64），此时 body 为空。 */
+  bodyBase64?: string;
 }
 
 /** 一条规则的求值记录，供调试页显示。 */
@@ -316,6 +323,9 @@ const STAGE_NAMES: Record<string, string> = {
   '搜索': 'search', '发现': 'explore', '详情': 'detail', '目录': 'toc', '正文': 'content', '发现分类': 'menus'
 };
 const MENU_ITEM = 'native:item:';
+/** 可以写自己 rate 的阶段，以及作用域里记当前阶段的名字。 */
+const RATE_STAGES = ['search', 'explore', 'detail', 'toc', 'content'];
+const STAGE_SCOPE_KEY = '__stage';
 const MAX_TOC_PAGES = 1000;
 /** 目录或正文的 nextUrl 一次给出多个地址时，剩余分页每批并发请求的页数；书源可用 batch 改为 1～16。 */
 const DEFAULT_PAGE_BATCH = 4;
@@ -591,7 +601,7 @@ export class NativeSourceRunner {
 
   async search(key: string, page: number = 1): Promise<NativeBookRecord[]> {
     const stage = this.scripted(this.requireStage(this.definition.search, '搜索'), BOOK_FIELD_NAMES);
-    const scope = (await this.baseScope()).set('key', key).set('page', page);
+    const scope = (await this.baseScope('search')).set('key', key).set('page', page);
     const listener = this.partialSearchListener;
     // 脚本在后台线程里同步等宿主，而解析一批可能要用脚本引擎本身求字段表达式，所以不在宿主调用里解析：
     // 先排进队列让脚本继续搜下一个站，各批按顺序解析后交给 listener，最后的结果等队列清空后再读。
@@ -634,7 +644,7 @@ export class NativeSourceRunner {
 
   async exploreMenus(): Promise<NativeMenuEntry[]> {
     const explore = this.requireStage(this.definition.explore, '发现');
-    const scope = (await this.baseScope());
+    const scope = (await this.baseScope('explore'));
     const entries: NativeMenuEntry[] = [];
     const menus = explore.menus || [];
     for (let i = 0; i < menus.length; i++) {
@@ -715,7 +725,7 @@ export class NativeSourceRunner {
 
   async explore(target: string, page: number = 1): Promise<NativeBookRecord[]> {
     const explore = this.scripted(this.requireStage(this.definition.explore, '发现'), BOOK_FIELD_NAMES);
-    const scope = (await this.baseScope()).set('page', page);
+    const scope = (await this.baseScope('explore')).set('page', page);
     let url = '';
     let title = '';
     let menuItem: NativeValue = null;
@@ -760,7 +770,7 @@ export class NativeSourceRunner {
 
   async detail(book: NativeBookInput): Promise<NativeBookRecord> {
     const stage = this.scripted(this.definition.detail || {}, BOOK_FIELD_NAMES);
-    const scope = (await this.baseScope()).set('book', book);
+    const scope = (await this.baseScope('detail')).set('book', book);
     this.scriptKeep = stage.script ? {} : null;
     let loaded: StagePage;
     let scriptKeep: Record<string, string> = {};
@@ -790,7 +800,7 @@ export class NativeSourceRunner {
     const defaultUrl = book.tocUrl || book.bookUrl;
     const nextStage: NativeStageSpec = Object.assign({}, stage, { url: '= __url' });
     const pageScope = async (page: number, url: string): Promise<NativeScope> =>
-      (await this.baseScope()).set('book', book).set('page', page).child().set('__url', url);
+      (await this.baseScope('toc')).set('book', book).set('page', page).child().set('__url', url);
     const pacer = new UiPacer();
     let nextUrl = '';
     for (let page = 1; page <= MAX_TOC_PAGES; page++) {
@@ -957,7 +967,7 @@ export class NativeSourceRunner {
     });
     if (this.cancelled()) return empty('');
     const pageScope = async (page: number, url: string): Promise<NativeScope> =>
-      (await this.baseScope()).set('book', book).set('chapter', chapter).set('page', page).child().set('__url', url);
+      (await this.baseScope('content')).set('book', book).set('chapter', chapter).set('page', page).child().set('__url', url);
     const firstPage = await this.loadStage(stage, await pageScope(1, ''), chapter.url, '正文');
     const firstBase = firstPage.baseUrl;
     await this.runExtraFetches(stage.fetch, firstPage);
@@ -1523,7 +1533,22 @@ export class NativeSourceRunner {
     return this.host.userAgent ? this.host.userAgent() : '';
   }
 
-  private async baseScope(): Promise<NativeScope> {
+  /**
+   * 阶段写了自己的 rate 时返回它（按阶段单独排队），否则为 null，请求沿用顶层 rate。
+   * 发现分类（dynamicMenus）属于发现阶段；登录、按钮、cache 等不属于任何阶段，总是用顶层。
+   */
+  private stageRate(stageName: string): BookSourceStageRate | null {
+    const stage = stageName === 'menus' ? 'explore' : stageName;
+    if (RATE_STAGES.indexOf(stage) < 0) return null;
+    const spec = (this.definition as NativeValue as Record<string, NativeValue>)[stage];
+    if (!spec || typeof spec !== 'object' || Array.isArray(spec)) return null;
+    const rate = (spec as Record<string, NativeValue>)['rate'];
+    if (rate === undefined || rate === null) return null;
+    return { stage: stage, rate: String(rate).trim() };
+  }
+
+  /** stage 是 search / explore / detail / toc / content 时记进作用域，这个阶段里建的请求按它的 rate 排队。 */
+  private async baseScope(stage: string = ''): Promise<NativeScope> {
     const scope = new NativeScope()
       .set('vars', this.varValues)
       .set('source', { url: this.definition.url, name: this.definition.name })
@@ -1540,7 +1565,9 @@ export class NativeSourceRunner {
       .set('form', {});
     await this.applyCaches(scope);
     (await this.applyLets(this.definition.let, scope));
-    return scope.child();
+    const child = scope.child();
+    if (stage) child.set(STAGE_SCOPE_KEY, stage);
+    return child;
   }
 
   private async applyLets(lets: Record<string, NativeValue> | undefined, scope: NativeScope): Promise<void> {
@@ -1622,7 +1649,8 @@ export class NativeSourceRunner {
       interactive: interactive,
       background: background,
       requestHeaders: (own: Record<string, string>): Promise<Record<string, string>> => this.requestHeaders(own, scope),
-      charset: String(this.definition.charset || '').trim()
+      charset: String(this.definition.charset || '').trim(),
+      stageRate: this.stageRate(stageName) ?? undefined
     });
     const startedAt = Date.now();
     try {
@@ -1829,7 +1857,8 @@ export class NativeSourceRunner {
     const method = (rendered || (body ? 'POST' : 'GET')).toUpperCase();
     if (!/^[A-Z]+$/.test(method)) throw new NativeSourceError(`请求方法无效：${rendered}`);
     const web = spec.webView && typeof spec.webView === 'object' ? spec.webView : null;
-    return {
+    const stageRate = this.stageRate(scope.has(STAGE_SCOPE_KEY) ? NativeExpr.toText(scope.get(STAGE_SCOPE_KEY)) : '');
+    const request: NativeRequest = {
       url: url, method: method, headers: await this.requestHeaders(headers, scope, lenientSourceHeaders), body: body,
       webView: spec.webView === true || !!web,
       webWaitFor: web && web.waitFor ? String(web.waitFor).trim() : '',
@@ -1838,6 +1867,8 @@ export class NativeSourceRunner {
       retry: HttpRetryPolicy.parse(spec.retry),
       primary: primary
     };
+    if (stageRate) request.stageRate = stageRate;
+    return request;
   }
 
   private async renderDeep(value: NativeValue, scope: NativeScope): Promise<NativeValue> {

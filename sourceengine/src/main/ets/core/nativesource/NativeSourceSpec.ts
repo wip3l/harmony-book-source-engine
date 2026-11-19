@@ -129,6 +129,11 @@ export interface NativeStageSpec extends NativeRequestSpec {
   fail?: string;
   list?: string;
   fields?: Record<string, NativeValue>;
+  /**
+   * 这个阶段自己的限流，写法同顶层 rate（"次数/毫秒" 或毫秒间隔）。写了就按阶段单独排队、不占顶层的名额；
+   * 写 0 表示这个阶段不限流；不写沿用顶层。阶段里的翻页、附加请求和脚本请求都算这个阶段的。
+   */
+  rate?: string | number;
 }
 
 export interface NativeMenuSpec {
@@ -703,6 +708,16 @@ export class NativeSourceSpec {
       }
       NativeSourceSpec.checkBatch(definition.toc.batch, 'toc.batch', errors);
     }
+    for (const stageName of NativeSourceSpec.RATE_STAGES) {
+      const stage = (definition as NativeValue as Record<string, NativeValue>)[stageName];
+      if (!stage || typeof stage !== 'object' || Array.isArray(stage)) continue;
+      const rate = (stage as Record<string, NativeValue>)['rate'];
+      if (rate === undefined) continue;
+      if ((typeof rate !== 'string' && typeof rate !== 'number') || !NativeSourceSpec.isRateText(String(rate))) {
+        errors.push(`${stageName}.rate 写法不对：写成“次数/毫秒”（如 "8/1000"）或毫秒间隔（如 "1000"），` +
+          `写 0 表示这个阶段不限流`);
+      }
+    }
     if (definition.content) {
       const content = definition.content;
       if (content.videoPage !== undefined && typeof content.videoPage !== 'string') {
@@ -802,17 +817,24 @@ export class NativeSourceSpec {
       return [];
     }
     const warnings: string[] = [];
-    const rate = definition.rate as NativeValue;
-    const rateText = rate === undefined || rate === null ? '' : String(rate).trim();
-    if (/^\d+$/.test(rateText) && Number(rateText) > 0) {
-      const batched = [definition.toc && definition.toc.batch !== undefined ? 'toc.batch' : '',
-        definition.content && definition.content.batch !== undefined ? 'content.batch' : '']
-        .filter((name: string): boolean => name.length > 0);
-      if (batched.length > 0) {
-        warnings.push(`rate 写成纯数字（每次请求间隔 ${rateText} 毫秒）会让 ${batched.join('、')} 的并发失效，` +
-          `分页只能一页一页排队；站点要限流时写成“次数/毫秒”，例如 "8/1000"`);
-      }
+    // 分页并发（batch）受所在阶段实际生效的 rate 约束：阶段写了 rate 用阶段的，否则用顶层的。
+    const intervalBatches: Map<string, string[]> = new Map<string, string[]>();
+    const intervals: Map<string, string> = new Map<string, string>();
+    for (const stageName of ['toc', 'content']) {
+      const stage = stageName === 'toc' ? definition.toc : definition.content;
+      if (!stage || stage.batch === undefined) continue;
+      const own = stage.rate !== undefined && stage.rate !== null;
+      const rate = (own ? stage.rate : definition.rate) as NativeValue;
+      const rateText = rate === undefined || rate === null ? '' : String(rate).trim();
+      if (!/^\d+$/.test(rateText) || Number(rateText) <= 0) continue;
+      const label = own ? `${stageName}.rate` : 'rate';
+      intervals.set(label, rateText);
+      intervalBatches.set(label, (intervalBatches.get(label) || []).concat([`${stageName}.batch`]));
     }
+    intervalBatches.forEach((batched: string[], label: string): void => {
+      warnings.push(`${label} 写成纯数字（每次请求间隔 ${intervals.get(label)} 毫秒）会让 ${batched.join('、')} 的并发失效，` +
+        `分页只能一页一页排队；站点要限流时写成“次数/毫秒”，例如 "8/1000"`);
+    });
     for (const entry of NativeSourceSpec.selectorRules(definition)) {
       const pseudo = NativeSourceSpec.unsupportedPseudo(entry.rule);
       if (pseudo) warnings.push(`${entry.path}：选择器里的 ${pseudo} 不受支持，会静默取空；` +
@@ -894,6 +916,15 @@ export class NativeSourceSpec {
     if (maxPage !== undefined && !(typeof maxPage === 'number' && Number.isInteger(maxPage) && maxPage >= 1 && maxPage <= 10000)) {
       errors.push(`${path} 必须是 1 到 10000 的整数`);
     }
+  }
+
+  /** 可以写自己 rate 的阶段。 */
+  static readonly RATE_STAGES: string[] = ['search', 'explore', 'detail', 'toc', 'content'];
+
+  /** rate 的合法写法：空或 0（不限流）、毫秒间隔、“次数/毫秒”。与 BookSourceRateLimiter.parse 认的一致。 */
+  private static isRateText(value: string): boolean {
+    const text = value.trim();
+    return text === '' || /^\d+$/.test(text) || /^\d+\s*\/\s*\d+$/.test(text);
   }
 
   private static checkBatch(batch: number | undefined, path: string, errors: string[]): void {
