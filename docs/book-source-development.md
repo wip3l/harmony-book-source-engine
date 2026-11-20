@@ -606,6 +606,7 @@ span.0:5@text          只有两个数字时表示范围：第 0 到第 4 个
 | `wordCount` | 字数，按文本原样显示，例如 `'35.2万字'` |
 | `lastChapter` | 最新章节名 |
 | `updateTime` | 更新时间，按文本原样显示 |
+| `site` | 可选，聚合书源里这条结果来自哪个分站（如 `'甲小说'`），最长 64 个字符。参考宿主搜索时每个书源最多收 50 条；写了 `site` 的结果改为每个分站各收 50 条，热门分站不会把其他分站的结果挤掉。普通书源不要写 |
 | `status` | 连载状态，按文本原样显示，例如 `'连载'`、`'完结'`；参考宿主把它接在 `kind` 后面一起当标签显示，拆分规则同 `kind`。要换成“连载中 / 已完结”这类展示词时用 `lookup`，见[内置函数](#内置函数) |
 | `tocUrl` | 目录地址，通常在详情里给出 |
 | `type` | 媒体类型 `text`、`audio`、`comic`、`video`，留空时沿用书源的 `type` |
@@ -1681,7 +1682,7 @@ fn sign(path, ts) {
 | 数组或对象 | 已解析的 JSON（`data`），JSONPath 照常可用 |
 | `page(原文, 地址)` | 原文加上它的地址，相对链接按这个地址补全 |
 
-为了少写样板：脚本阶段不写 `list` 时，返回数组的每一项就是一条结果；不写 `fields` 时按同名键取值（书籍取 `name`、`author`、`kind`、`intro`、`coverUrl`、`wordCount`、`lastChapter`、`updateTime`、`status`、`bookUrl`、`tocUrl`、`type`，章节取 `title`、`url`、`isVip`、`isPay`、`isVolume`、`updateTime`、`wordCount`、`tag`、`type`）。写了 `fields` 就要写全必填字段。正文不写 `text`、`images`、`audio`、`video` 时，返回字符串就是正文，返回对象时按书籍类型取同名键；视频专用接口还读取返回对象的 `videoPage`，详见[视频网页回退](#视频网页回退)。
+为了少写样板：脚本阶段不写 `list` 时，返回数组的每一项就是一条结果；不写 `fields` 时按同名键取值（书籍取 `name`、`author`、`kind`、`intro`、`coverUrl`、`wordCount`、`lastChapter`、`updateTime`、`status`、`bookUrl`、`tocUrl`、`type`、`site`，章节取 `title`、`url`、`isVip`、`isPay`、`isVolume`、`updateTime`、`wordCount`、`tag`、`type`）。写了 `fields` 就要写全必填字段。正文不写 `text`、`images`、`audio`、`video` 时，返回字符串就是正文，返回对象时按书籍类型取同名键；视频专用接口还读取返回对象的 `videoPage`，详见[视频网页回退](#视频网页回退)。
 
 - 可以写 `script` 的阶段：`search`、`explore`、`detail`、`toc`、`content`。写了 `script` 的阶段不用写 `url`；`toc` 和 `content` 的翻页由脚本自己处理，**不再跟随 `nextUrl`**。
 - 发现页的分类用 `menus` 声明（没有 `url` 的仍是分组标题），要在脚本里算出分类就用 [`dynamicMenus.script`](#发现-explore)。发现阶段写了 `script` 时，分类的 `url` 可以写任意标识，函数从 `ctx.url` 读到，`ctx.title` 是分类名，动态分类的条目在 `ctx.menu`。
@@ -2237,7 +2238,7 @@ const titles = cards.map(card => native.sel('@css:.title@text', card));
 | `explore.dynamicMenus` | 请求字段、`list`、`title`、`target`（不写 `script` 时四项必填）、`script` |
 | `detail` | 通用字段、`keep`、`fetch` |
 | `toc` | 通用字段、`nextUrl`、`batch`、`reverse`；`list`\*、`fields.title`\*、`fields.url`\* |
-| 书籍 `fields` | `name`、`author`、`kind`、`intro`、`coverUrl`、`wordCount`、`lastChapter`、`updateTime`、`status`、`bookUrl`、`tocUrl`、`type` |
+| 书籍 `fields` | `name`、`author`、`kind`、`intro`、`coverUrl`、`wordCount`、`lastChapter`、`updateTime`、`status`、`bookUrl`、`tocUrl`、`type`、`site` |
 | 章节 `fields` | `title`、`url`、`isVip`、`isPay`、`isVolume`、`updateTime`、`wordCount`、`tag`、`type` |
 | `content` | 通用字段；`text`、`images`、`audio`、`video`、`videoPage`、`script`（至少一个）；`mediaError`、`mediaHeaders`、`replace`、`nextUrl`、`batch`、`fetch`、`imageDecode`、`links`、`comments`。仅网页播放须使用视频类型，见[视频网页回退](#视频网页回退) |
 | `fetch.名称` | 请求字段、`when` |

@@ -172,6 +172,8 @@ export interface NativeBookRecord {
   tocUrl: string;
   /** text | audio | comic | video，空串表示沿用书源类型。 */
   type: string;
+  /** 聚合书源里这条结果来自哪个分站；普通书源不写。宿主可以据此按分站分别计搜索上限。 */
+  site?: string;
   keep: Record<string, string>;
 }
 
@@ -317,7 +319,7 @@ type StageReuse = '' | 'keep' | 'take';
 const MENU_STATIC = 'native:menu:';
 /** 脚本阶段不写 fields 时，按同名键取值的字段。 */
 const BOOK_FIELD_NAMES = ['name', 'author', 'kind', 'intro', 'coverUrl', 'wordCount', 'lastChapter', 'updateTime',
-  'status', 'bookUrl', 'tocUrl', 'type'];
+  'status', 'bookUrl', 'tocUrl', 'type', 'site'];
 const CHAPTER_FIELD_NAMES = ['title', 'url', 'isVip', 'isPay', 'isVolume', 'tag', 'updateTime', 'wordCount', 'type'];
 const STAGE_NAMES: Record<string, string> = {
   '搜索': 'search', '发现': 'explore', '详情': 'detail', '目录': 'toc', '正文': 'content', '发现分类': 'menus'
@@ -2039,6 +2041,7 @@ export class NativeSourceRunner {
       bookUrl: (await url('bookUrl')),
       tocUrl: (await url('tocUrl')),
       type: (literalType ? String(typeSpec).trim() : (await text('type'))).toLowerCase(),
+      site: fields['site'] === undefined ? '' : (await text('site')),
       keep: {}
     };
   }

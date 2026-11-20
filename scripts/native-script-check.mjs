@@ -187,6 +187,11 @@ try {
   });
   let host = scriptHost(respond);
   const books = await new NativeSourceRunner(searchSource, host, {}).search('斗破', 1);
+  // 聚合书源可以给每条结果标分站 site；没写的为空。
+  const sited = await new NativeSourceRunner(define({ ...base, search: { script: 'search' },
+    js: "function search() { return [{ name: '甲', bookUrl: '/a', site: '分站一' }, { name: '乙', bookUrl: '/b' }]; }" }),
+    scriptHost(respond), {}).search('x', 1);
+  equal(sited.map((b) => b.site || ''), ['分站一', ''], '脚本结果按同名键取 site');
   equal(books.map((b) => [b.name, b.author, b.bookUrl]), [
     ['斗破', '土豆', 'https://api.example.com/b/1'],
     ['凡人', '忘语', 'https://api.example.com/b/2'],

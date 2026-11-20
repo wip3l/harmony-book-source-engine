@@ -803,6 +803,14 @@ export class NativeSourceService {
     return BookUrlResolver.setVariableJson('', 'tab', type);
   }
 
+  /** 书籍变量里记分站名的键。 */
+  static readonly SITE_VARIABLE: string = 'site';
+
+  /** 搜索或发现结果来自聚合书源的哪个分站；没标时为空串。 */
+  static siteOf(book: SearchBook): string {
+    return book.variable ? BookUrlResolver.getVariableJson(book.variable, NativeSourceService.SITE_VARIABLE) : '';
+  }
+
   private static toSearchBook(source: BookSource, record: NativeBookRecord): SearchBook {
     const book = new SearchBook();
     book.name = BookFieldSanitizer.clean(record.name);
@@ -822,6 +830,9 @@ export class NativeSourceService {
     // 媒体类型同时写进书籍变量，加入书架后各处的类型判定都读得到。
     book.variable = BookUrlResolver.setVariableJson('', 'tab', NativeSourceService.typeName(book.type, source,
       record.type ? NativeSourceService.tabVariable(record.type) : ''));
+    // 聚合书源标出的分站记进书籍变量：搜索按分站分别计上限时读它，加入书架后也留着。
+    const site = BookFieldSanitizer.clean(record.site || '').substring(0, 64);
+    if (site) book.variable = BookUrlResolver.setVariableJson(book.variable, NativeSourceService.SITE_VARIABLE, site);
     book.bookSourceComment = source.bookSourceComment;
     book.customOrder = source.customOrder;
     book.weight = source.weight;
