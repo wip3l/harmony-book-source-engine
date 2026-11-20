@@ -22,6 +22,11 @@ export interface NativeVarSpec {
   filter?: boolean;
   /** js 里的函数名：打开书源设置页时运行它取选项列表（例如测速后列出可用线路），失败时用 options。 */
   optionsScript?: string;
+  /**
+   * 显示条件，= 开头的表达式，只能读 vars（其他变量的当前值）。为假时这一项不出现在发现页筛选栏和书源设置页，
+   * 已保存的值保留、规则里照常能读。用来做联动：例如“源站”按“模式”拆成几项，只显示当前模式的那一项。
+   */
+  when?: string;
 }
 
 /** 听书音色：id 是传给接口的值，name 是显示名。 */
@@ -540,6 +545,15 @@ export class NativeSourceSpec {
       }
       if (item.default !== undefined && typeof item.default !== 'string' &&
         (typeof item.default !== 'number' || !Number.isFinite(item.default))) errors.push(`vars.${item.key}.default 必须是字符串或有限数字`);
+      if (item.when !== undefined) {
+        // 显示条件在筛选栏里同步求值，只认表达式，不能是选择器或模板。
+        if (typeof item.when !== 'string' || item.when.trim().charAt(0) !== '=') {
+          errors.push(`vars.${item.key}.when 必须是 = 开头的表达式，例如 "= vars.mode == '小说'"`);
+        } else {
+          const whenError = NativeExpr.check(item.when.trim().substring(1));
+          if (whenError) errors.push(`vars.${item.key}.when：${whenError}`);
+        }
+      }
     }
 
     if (definition.lib !== undefined && typeof definition.lib !== 'string') {

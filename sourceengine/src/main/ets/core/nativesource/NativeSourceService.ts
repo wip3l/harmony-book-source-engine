@@ -544,7 +544,8 @@ export class NativeSourceService {
     const definition = NativeSourceSpec.unpack(source.jsLib || '');
     if (!definition) return [];
     const current = NativeSourceRunner.resolveVars(definition, NativeSourceService.storedVars(source));
-    return (definition.vars || []).map((item: NativeVarSpec): NativeVarItem => ({
+    // 显示条件（when）为假的项不列出来；它们已保存的值不受影响。
+    return NativeSourceRunner.visibleVars(definition, NativeSourceService.storedVars(source)).map((item: NativeVarSpec): NativeVarItem => ({
       key: item.key,
       label: item.label || item.key,
       options: Array.isArray(item.options) ? item.options.map((option: string | number): string => String(option)) : [],
@@ -620,13 +621,36 @@ export class NativeSourceService {
 
   /**
    * 发现页的筛选项：定义里标了 filter 且带选项的变量。筛选栏不运行 optionsScript，只列静态 options；
-   * 设置页选了脚本给出的值时把它补在末尾，让筛选栏仍能高亮当前值。
+   * 设置页选了脚本给出的值时把它补在末尾，让筛选栏仍能高亮当前值。显示条件（when）为假的项不出现，
+   * 所以切换一个筛选后要重新取一次，联动的项才会换过来。
    */
   static filters(source: BookSource): NativeFilterGroup[] {
     const definition = NativeSourceSpec.unpack(source.jsLib || '');
     if (!definition) return [];
-    const current = NativeSourceRunner.resolveVars(definition, NativeSourceService.storedVars(source));
-    return (definition.vars || [])
+    return NativeSourceService.filterGroups(definition, NativeSourceService.storedVars(source));
+  }
+
+  /**
+   * 筛选面板里还没确认的选择会让筛选项变成什么样：按顺序把 picks 代入变量再取一次筛选项，不保存。
+   * 用来在面板里即时联动（选了“短剧”，“源站”马上换成短剧的那一组）；对当前不显示或不在选项里的选择忽略。
+   */
+  static filtersWith(source: BookSource, picks: NativeFilterGroup[]): NativeFilterGroup[] {
+    const definition = NativeSourceSpec.unpack(source.jsLib || '');
+    if (!definition) return [];
+    const stored = NativeSourceService.storedVars(source);
+    for (const pick of picks) {
+      const target = NativeSourceRunner.visibleVars(definition, stored)
+        .find((item: NativeVarSpec): boolean => item.filter === true && (item.label || item.key) === pick.title);
+      if (!target || !Array.isArray(target.options)) continue;
+      if (target.options.map((option: string | number): string => String(option)).indexOf(pick.selected) < 0) continue;
+      stored[target.key] = pick.selected;
+    }
+    return NativeSourceService.filterGroups(definition, stored);
+  }
+
+  private static filterGroups(definition: NativeSourceDefinition, stored: Record<string, NativeValue>): NativeFilterGroup[] {
+    const current = NativeSourceRunner.resolveVars(definition, stored);
+    return NativeSourceRunner.visibleVars(definition, stored)
       .filter((item: NativeVarSpec): boolean => item.filter === true && Array.isArray(item.options) &&
         item.options.length > 0)
       .map((item: NativeVarSpec): NativeFilterGroup => {
@@ -641,7 +665,10 @@ export class NativeSourceService {
   static variableAfterSelect(source: BookSource, title: string, selection: string): string {
     const definition = NativeSourceSpec.unpack(source.jsLib || '');
     if (!definition) return '';
-    const target = (definition.vars || []).find((item: NativeVarSpec): boolean => (item.label || item.key) === title);
+    // 联动的几项可以共用一个显示名（同一时刻只显示其中一项），所以先在当前显示的项里找。
+    const byTitle = (item: NativeVarSpec): boolean => (item.label || item.key) === title;
+    const target = NativeSourceRunner.visibleVars(definition, NativeSourceService.storedVars(source)).find(byTitle) ||
+      (definition.vars || []).find(byTitle);
     if (!target) return '';
     if (Array.isArray(target.options) && target.options.length > 0 &&
       target.options.map((option: string | number): string => String(option)).indexOf(selection) < 0) {

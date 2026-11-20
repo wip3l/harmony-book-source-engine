@@ -556,6 +556,21 @@ try {
   });
   equal(NativeSourceRunner.resolveVars(optionDefinition, { line: '乙', mode: '漫画' }), { line: '乙', mode: '小说' },
     '写了 optionsScript 的变量保留脚本给出的值，其余变量不在 options 里仍回退');
+  // 变量的显示条件 when：只读 vars，联动的几项可以共用显示名；为假的项不显示但值保留。
+  const linked = define({ ...base, vars: [
+    { key: 'mode', label: '模式', options: ['小说', '听书'], filter: true },
+    { key: 'site_novel', label: '源站', options: ['全部', '甲'], filter: true, when: "= vars.mode == '小说'" },
+    { key: 'site_audio', label: '源站', options: ['全部', '丙'], filter: true, when: "= vars.mode == '听书'" },
+    { key: 'broken', when: '= nothing.here.x' },
+  ] });
+  equal(NativeSourceRunner.visibleVars(linked, {}).map((item) => item.key), ['mode', 'site_novel', 'broken'],
+    '默认模式只显示对应的源站；条件求值出错的项照常显示');
+  equal(NativeSourceRunner.visibleVars(linked, { mode: '听书', site_novel: '甲' }).map((item) => item.key),
+    ['mode', 'site_audio', 'broken'], '换模式后显示另一组源站');
+  equal(NativeSourceRunner.resolveVars(linked, { mode: '听书', site_novel: '甲' }).site_novel, '甲', '不显示的项值保留');
+  let whenError = '';
+  try { define({ ...base, vars: [{ key: 'a', when: 'vars.b' }] }); } catch (e) { whenError = e.message; }
+  equal(/vars.a.when 必须是 = 开头的表达式/.test(whenError), true, 'when 不是表达式时导入报错');
   equal(NativeSourceRunner.resolveVars(optionDefinition, { line: '' }), { line: '甲', mode: '小说' },
     'optionsScript 变量没有保存值时用默认值');
 

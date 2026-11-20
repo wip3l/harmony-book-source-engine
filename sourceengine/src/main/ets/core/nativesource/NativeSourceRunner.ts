@@ -599,6 +599,30 @@ export class NativeSourceRunner {
     return values;
   }
 
+  /**
+   * 按各变量的 when 判断现在该显示哪些：表达式只读得到 vars（当前值），求值出错时照常显示，
+   * 避免一条写错的条件把设置项藏起来改不了。没写 when 的总是显示。
+   */
+  static visibleVars(definition: NativeSourceDefinition, stored: Record<string, NativeValue>): NativeVarSpec[] {
+    const all = definition.vars || [];
+    if (!all.some((item: NativeVarSpec): boolean => typeof item.when === 'string')) return all.slice();
+    const values = NativeSourceRunner.resolveVars(definition, stored);
+    const expr = new NativeExpr({
+      jsonPath: (): NativeValue[] => [],
+      select: (): string[] => [],
+      digest: (): string => ''
+    });
+    const scope = new NativeScope().set('vars', values as Record<string, NativeValue>);
+    return all.filter((item: NativeVarSpec): boolean => {
+      if (typeof item.when !== 'string') return true;
+      try {
+        return NativeExpr.isTruthy(expr.evaluate(item.when.trim().replace(/^=/, ''), scope));
+      } catch (e) {
+        return true;
+      }
+    });
+  }
+
   async search(key: string, page: number = 1): Promise<NativeBookRecord[]> {
     const stage = this.scripted(this.requireStage(this.definition.search, '搜索'), BOOK_FIELD_NAMES);
     const scope = (await this.baseScope('search')).set('key', key).set('page', page);
