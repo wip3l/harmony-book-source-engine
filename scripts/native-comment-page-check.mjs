@@ -217,6 +217,38 @@ try {
   exprChapter.content.comments.chapterHot = '= "表达式本章热评"';
   assert.equal((await new Runner(exprChapter, chapterHost, {}).content(book, chapter)).chapterCommentPreview,
     '表达式本章热评');
+  const hotsOf = content => (content.chapterCommentHots ?? []).map(hot => [hot.user, hot.text, hot.likes]);
+  assert.deepEqual(hotsOf(chapterContent), [['', '本章热评', '13662']], 'the old single-text form is one hot comment');
+  // A list of hot comments with nicknames, and the chapter's comment count for the title row.
+  const listChapter = structuredClone(chapterDef);
+  listChapter.content.comments.chapterHot = { request: { url: '/hot/-1' },
+    text: '= map(res.list, x => ({ text: x.content, user: x.nick, likes: x.likeCount }))', count: '= res.total' };
+  assert.deepEqual(Spec.validate(listChapter), []);
+  const listHost = createTestHost(JsonPathEvaluator, async (req) => {
+    if (req.url.includes('/stats')) return { counts: { 0: 2 } };
+    if (req.url.includes('/hot/-1')) return { total: 79, list: [{ content: '第一条', nick: '甲', likeCount: 29 },
+      { content: '', nick: '空的', likeCount: 1 }, { content: '第二条', nick: '乙', likeCount: '1.2万' },
+      { content: '第三条', nick: '丙' }, { content: '第四条', nick: '丁' }] };
+    if (req.url.includes('/hot/')) return { list: [] };
+    return { text: '第一段' };
+  });
+  const listed = await new Runner(listChapter, listHost, {}).content(book, chapter);
+  assert.deepEqual(hotsOf(listed), [['甲', '第一条', '29'], ['乙', '第二条', '1.2万'], ['丙', '第三条', '']],
+    'empty comments are skipped and at most three are kept');
+  assert.equal(listed.chapterCommentCount, '79条评论');
+  assert.equal(listed.chapterCommentPreview, '第一条', 'the first hot comment still fills the old fields');
+  assert.equal(listed.chapterCommentLikes, '29');
+  const singleChapter = structuredClone(chapterDef);
+  singleChapter.content.comments.chapterHot.user = "= 'UP主'";
+  singleChapter.content.comments.chapterHot.count = "= '全部 3 条'";
+  const single = await new Runner(singleChapter, chapterHost, {}).content(book, chapter);
+  assert.deepEqual(hotsOf(single), [['UP主', '本章热评', '13662']]);
+  assert.equal(single.chapterCommentCount, '全部 3 条', 'a count that is not a number is shown as written');
+  const shapeChapter = structuredClone(chapterDef);
+  shapeChapter.content.comments.chapterHot = "= { count: '1.2万', items: [{ text: '甲说', user: '甲' }, '乙说'] }";
+  const shaped = await new Runner(shapeChapter, chapterHost, {}).content(book, chapter);
+  assert.deepEqual(hotsOf(shaped), [['甲', '甲说', ''], ['', '乙说', '']]);
+  assert.equal(shaped.chapterCommentCount, '1.2万条评论');
   const failChapter = structuredClone(chapterDef);
   failChapter.content.comments.chapterHot.request.url = '/broken';
   const failHost = createTestHost(JsonPathEvaluator, async (req) => {

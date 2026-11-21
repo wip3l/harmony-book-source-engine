@@ -1031,7 +1031,8 @@ export class NativeSourceService {
     }
     if (result.chapterCommentUrl) {
       const tail = ReaderActionMarker.create('本章说', result.chapterCommentUrl, '本章说',
-        result.chapterCommentPreview || '', result.chapterCommentLikes || '');
+        result.chapterCommentPreview || '', result.chapterCommentLikes || '', result.chapterCommentCount || '',
+        result.chapterCommentHots || []);
       if (tail) lines.push('', tail);
     }
     return lines.join('\n');

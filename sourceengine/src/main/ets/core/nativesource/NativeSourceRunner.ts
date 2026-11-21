@@ -13,6 +13,7 @@ import { SourceCoverUrl } from './SourceCoverUrl';
 import { NativePureRule } from './NativePureRule';
 import { NativeJsPrelude } from './NativeJsPrelude';
 import { NativeCommentPage } from './NativeCommentPage';
+import { ReaderActionHot, ReaderActionMarker } from '../book/ReaderActionMarker';
 import { NativeScriptHost, NativeScriptLimits } from './NativeScriptHost';
 import type { NativeScriptEngine } from './NativeScriptHost';
 import type { NativeBrowserResult } from './NativeSourceInteraction';
@@ -226,6 +227,12 @@ export interface NativeParagraphComment {
   likes?: string;
 }
 
+/** 本章说的热评列表与评论条数文字。 */
+export interface NativeChapterHot {
+  hots: ReaderActionHot[];
+  count: string;
+}
+
 export interface NativeContentResult {
   /** 视频网页回退信息。仅视频专用调用允许没有直链时返回这些信息。 */
   videoPage?: string;
@@ -237,9 +244,12 @@ export interface NativeContentResult {
   paragraphComments: NativeParagraphComment[];
   /** 整章评论页地址，空串表示没有。 */
   chapterCommentUrl: string;
-  /** 本章说卡片上的热评原文与点赞数（chapterHot），没有时不写。 */
+  /** 本章说卡片上的热评原文与点赞数（chapterHot 第一条），没有时不写。 */
   chapterCommentPreview?: string;
   chapterCommentLikes?: string;
+  /** 本章说卡片上的评论条数文字与热评列表（chapterHot），没有时不写。 */
+  chapterCommentCount?: string;
+  chapterCommentHots?: ReaderActionHot[];
   /** 正文末尾的链接按钮。 */
   links: NativeContentLink[];
   /** 漫画的图片地址（kind 为 images 时）。 */
@@ -1240,33 +1250,83 @@ export class NativeSourceRunner {
     return Object.assign({}, result);
   }
 
-  /** 本章说的热评：[文字, 点赞数]。任何失败、超时都返回空，不影响正文。 */
-  private async fetchChapterHot(spec: string | NativeChapterHotSpec, scope: NativeScope): Promise<string[]> {
-    try {
-      if (typeof spec === 'string') {
-        return NativeSourceRunner.hotEntry({ 'c': await this.value(spec, scope) }, 'c');
+  /** 评论条数的显示文字：纯数字（含 1.2万、999+）补“条评论”，其他文字原样。 */
+  static chapterCountText(value: NativeValue): string {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'number') return Number.isFinite(value) && value > 0 ? `${Math.floor(value)}条评论` : '';
+    const text = String(value).trim();
+    if (!text || /^0+$/.test(text)) return '';
+    return /^\d+(?:\.\d+)?[万wWkK千]?\+?$/.test(text) ? `${text}条评论` : text;
+  }
+
+  /**
+   * chapterHot 的结果：文字、{ text, likes, user }、它们的列表，或 { count, items }。
+   * 规则里单独写的 likes / user 只补给“结果只是一条文字”的情况。
+   */
+  static chapterHotValue(value: NativeValue, likes: string = '', user: string = ''): NativeChapterHot {
+    const found: NativeChapterHot = { hots: [], count: '' };
+    const one = (entry: NativeValue): void => {
+      const hot = new ReaderActionHot();
+      if (typeof entry === 'string' || typeof entry === 'number') {
+        hot.text = String(entry);
+      } else if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        const record = entry as Record<string, NativeValue>;
+        hot.text = typeof record['text'] === 'string' ? record['text'] as string : '';
+        const entryLikes = record['likes'];
+        hot.likes = typeof entryLikes === 'string' || typeof entryLikes === 'number' ? String(entryLikes) : '';
+        hot.user = typeof record['user'] === 'string' ? record['user'] as string : '';
       }
-      if (spec.when && !NativeExpr.isTruthy(await this.value(spec.when, scope))) return ['', ''];
-      const work = (async (): Promise<string[]> => {
+      found.hots.push(hot);
+    };
+    if (Array.isArray(value)) {
+      (value as NativeValue[]).slice(0, ReaderActionMarker.MAX_HOT_ITEMS * 2).forEach(one);
+    } else if (value && typeof value === 'object' && Array.isArray((value as Record<string, NativeValue>)['items'])) {
+      const record = value as Record<string, NativeValue>;
+      (record['items'] as NativeValue[]).slice(0, ReaderActionMarker.MAX_HOT_ITEMS * 2).forEach(one);
+      found.count = NativeSourceRunner.chapterCountText(record['count']);
+    } else {
+      one(value);
+      if (typeof value === 'string' || typeof value === 'number') {
+        found.hots[0].likes = likes;
+        found.hots[0].user = user;
+      }
+    }
+    found.hots = ReaderActionMarker.normalizeHots(found.hots);
+    return found;
+  }
+
+  /** 本章说的热评与评论条数。任何失败、超时都返回空，不影响正文。 */
+  private async fetchChapterHot(spec: string | NativeChapterHotSpec, scope: NativeScope): Promise<NativeChapterHot> {
+    const empty: NativeChapterHot = { hots: [], count: '' };
+    try {
+      if (typeof spec === 'string') return NativeSourceRunner.chapterHotValue(await this.value(spec, scope));
+      if (spec.when && !NativeExpr.isTruthy(await this.value(spec.when, scope))) return empty;
+      const work = (async (): Promise<NativeChapterHot> => {
         const hotScope = scope.child();
         const response = await this.fetchValue(spec.request, hotScope);
-        if (response === null || this.cancelled()) return ['', ''];
+        if (response === null || this.cancelled()) return empty;
         hotScope.set('res', response);
-        const text = NativeExpr.toText(await this.value(spec.text, hotScope)).trim();
-        if (!text) return ['', ''];
-        return [text, spec.likes ? NativeExpr.toText(await this.value(spec.likes, hotScope)).trim() : ''];
+        const raw = await this.value(spec.text, hotScope);
+        const likes = spec.likes ? NativeExpr.toText(await this.value(spec.likes, hotScope)).trim() : '';
+        const user = spec.user ? NativeExpr.toText(await this.value(spec.user, hotScope)).trim() : '';
+        const found = NativeSourceRunner.chapterHotValue(raw, likes, user);
+        if (spec.count) {
+          const count = NativeSourceRunner.chapterCountText(await this.value(spec.count, hotScope));
+          if (count) found.count = count;
+        }
+        return found;
       })();
       let timer = -1;
       const found = await Promise.race([
         work,
-        new Promise<string[]>((resolve): void => {
-          timer = setTimeout((): void => resolve(['', '']), NativeSourceRunner.HOT_COMMENT_WAIT_MS);
+        new Promise<NativeChapterHot>((resolve): void => {
+          timer = setTimeout((): void => resolve(empty), NativeSourceRunner.HOT_COMMENT_WAIT_MS);
         })
       ]);
       if (timer >= 0) clearTimeout(timer);
       return found;
     } catch (_) {
-      return ['', ''];
+      return empty;
     }
   }
 
@@ -1276,8 +1336,9 @@ export class NativeSourceRunner {
     const scope = page.scope.child();
     scope.set('stats', spec.stats ? await this.fetchValue(spec.stats, scope) : null);
     // 本章说热评与段落热评同时请求。
-    const chapterHotTask: Promise<string[]> = spec.chapterHot ? this.fetchChapterHot(spec.chapterHot, scope) :
-      Promise.resolve(['', '']);
+    const noChapterHot: NativeChapterHot = { hots: [], count: '' };
+    const chapterHotTask: Promise<NativeChapterHot> = spec.chapterHot ?
+      this.fetchChapterHot(spec.chapterHot, scope) : Promise.resolve(noChapterHot);
     const inline = !!(spec.page || spec.chapterPage);
     const contextKey = inline ? this.inlineKey(book, chapter) : '';
     const context: InlineContext = { sourceUrl: this.definition.url, savedAt: Date.now(), values: '', paragraphs: [], total: 0,
@@ -1349,10 +1410,12 @@ export class NativeSourceRunner {
       NativeSourceRunner.inlineContexts.set(contextKey, context);
     }
     const chapterHot = await chapterHotTask;
-    if (result.chapterCommentUrl && chapterHot[0]) {
-      result.chapterCommentPreview = chapterHot[0];
-      if (chapterHot[1]) result.chapterCommentLikes = chapterHot[1];
+    if (result.chapterCommentUrl && chapterHot.hots.length > 0) {
+      result.chapterCommentPreview = chapterHot.hots[0].text;
+      if (chapterHot.hots[0].likes) result.chapterCommentLikes = chapterHot.hots[0].likes;
+      result.chapterCommentHots = chapterHot.hots;
     }
+    if (result.chapterCommentUrl && chapterHot.count) result.chapterCommentCount = chapterHot.count;
   }
 
   private inlineKey(book: NativeBookInput, chapter: NativeChapterInput): string {

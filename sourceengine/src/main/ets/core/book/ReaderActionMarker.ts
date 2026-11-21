@@ -6,6 +6,17 @@ export class ReaderActionData {
   preview: string = '';
   /** 热评点赞数，按书源原样保存（如 "1.2k"）。 */
   likes: string = '';
+  /** 本章说的评论条数文字（如“79条评论”）。只有本章说入口会写。 */
+  count: string = '';
+  /** 本章说的热评列表，最多 ReaderActionMarker.MAX_HOT_ITEMS 条。段评热评只用 preview / likes。 */
+  hots: ReaderActionHot[] = [];
+}
+
+/** 本章说卡片上的一条热评。 */
+export class ReaderActionHot {
+  user: string = '';
+  text: string = '';
+  likes: string = '';
 }
 
 export class ReaderActionMatch {
@@ -28,6 +39,9 @@ export class ReaderActionMarker {
   static readonly MAX_URL_LENGTH: number = 12288;
   static readonly MAX_PREVIEW_LENGTH: number = 160;
   static readonly MAX_LIKES_LENGTH: number = 16;
+  static readonly MAX_COUNT_LENGTH: number = 24;
+  static readonly MAX_USER_LENGTH: number = 32;
+  static readonly MAX_HOT_ITEMS: number = 3;
 
   /** 热评原文：去掉标签、合并空白，最多 MAX_PREVIEW_LENGTH 个字符。 */
   static normalizePreview(value: string): string {
@@ -35,19 +49,55 @@ export class ReaderActionMarker {
       .substring(0, ReaderActionMarker.MAX_PREVIEW_LENGTH);
   }
 
-  static create(label: string, url: string, title: string = '', preview: string = '', likes: string = ''): string {
+  /** 本章说热评：合并空白、截断，丢掉没有正文的条目，最多 MAX_HOT_ITEMS 条。 */
+  static normalizeHots(items: ReaderActionHot[]): ReaderActionHot[] {
+    const result: ReaderActionHot[] = [];
+    for (const item of items || []) {
+      if (result.length >= ReaderActionMarker.MAX_HOT_ITEMS) break;
+      const text = ReaderActionMarker.normalizePreview(item ? String(item.text || '') : '');
+      if (!text) continue;
+      const hot = new ReaderActionHot();
+      hot.text = text;
+      hot.user = String(item.user || '').replace(/[\s　]+/g, ' ').trim()
+        .substring(0, ReaderActionMarker.MAX_USER_LENGTH);
+      hot.likes = String(item.likes || '').trim().substring(0, ReaderActionMarker.MAX_LIKES_LENGTH);
+      result.push(hot);
+    }
+    return result;
+  }
+
+  static normalizeCount(value: string): string {
+    return (value || '').replace(/[\s　]+/g, ' ').trim().substring(0, ReaderActionMarker.MAX_COUNT_LENGTH);
+  }
+
+  /**
+   * count / hots 只给本章说用：评论条数文字与热评列表。没有热评和条数时只写 label/url/title，
+   * 与旧版本标记逐字相同，已缓存章节不受影响。
+   */
+  static create(label: string, url: string, title: string = '', preview: string = '', likes: string = '',
+    count: string = '', hots: ReaderActionHot[] = []): string {
     const data = new ReaderActionData();
     data.label = ((label || '').trim() || '打开').substring(0, ReaderActionMarker.MAX_LABEL_LENGTH);
     data.url = (url || '').trim();
     data.title = (title || '').trim().substring(0, ReaderActionMarker.MAX_TITLE_LENGTH);
     if (!data.url || data.url.length > ReaderActionMarker.MAX_URL_LENGTH) return '';
-    // 没有热评时只写 label/url/title，与旧版本标记逐字相同，已缓存章节不受影响。
-    const record: Record<string, string> = { 'label': data.label, 'url': data.url, 'title': data.title };
+    const record: Record<string, Object> = { 'label': data.label, 'url': data.url, 'title': data.title };
     const safePreview = ReaderActionMarker.normalizePreview(preview);
     if (safePreview) {
       record['preview'] = safePreview;
       const safeLikes = (likes || '').trim().substring(0, ReaderActionMarker.MAX_LIKES_LENGTH);
       if (safeLikes) record['likes'] = safeLikes;
+    }
+    const safeCount = ReaderActionMarker.normalizeCount(count);
+    if (safeCount) record['count'] = safeCount;
+    const safeHots = ReaderActionMarker.normalizeHots(hots);
+    if (safeHots.length > 0) {
+      record['hots'] = safeHots.map((hot: ReaderActionHot): Record<string, string> => {
+        const entry: Record<string, string> = { 't': hot.text };
+        if (hot.user) entry['u'] = hot.user;
+        if (hot.likes) entry['l'] = hot.likes;
+        return entry;
+      });
     }
     const marker = `${ReaderActionMarker.PREFIX}${encodeURIComponent(JSON.stringify(record))}` +
       `${ReaderActionMarker.SUFFIX}`;
@@ -56,10 +106,11 @@ export class ReaderActionMarker {
 
   /** Persist a user-triggered action supplied by the imported source without interpreting it. */
   static createSourceScript(label: string, script: string, title: string = '', preview: string = '',
-    likes: string = ''): string {
+    likes: string = '', count: string = '', hots: ReaderActionHot[] = []): string {
     const code = (script || '').trim();
     if (!code || code.length > 4096) return '';
-    return this.create(label, `${this.SOURCE_SCRIPT_SCHEME}${encodeURIComponent(code)}`, title, preview, likes);
+    return this.create(label, `${this.SOURCE_SCRIPT_SCHEME}${encodeURIComponent(code)}`, title, preview, likes,
+      count, hots);
   }
 
   static sourceScript(url: string): string {
@@ -124,6 +175,20 @@ export class ReaderActionMarker {
       data.preview = ReaderActionMarker.normalizePreview(String(record['preview'] || ''));
       data.likes = data.preview ?
         String(record['likes'] || '').trim().substring(0, ReaderActionMarker.MAX_LIKES_LENGTH) : '';
+      data.count = ReaderActionMarker.normalizeCount(String(record['count'] || ''));
+      const hots = record['hots'];
+      if (Array.isArray(hots)) {
+        data.hots = ReaderActionMarker.normalizeHots((hots as Object[]).map((entry: Object): ReaderActionHot => {
+          const item = new ReaderActionHot();
+          if (entry && typeof entry === 'object') {
+            const fields = entry as Record<string, Object>;
+            item.text = String(fields['t'] || '');
+            item.user = String(fields['u'] || '');
+            item.likes = String(fields['l'] || '');
+          }
+          return item;
+        }));
+      }
       if (data.url.length > ReaderActionMarker.MAX_URL_LENGTH) return null;
       return data.url ? data : null;
     } catch (_) {

@@ -213,7 +213,7 @@ export interface NativeCommentPageSpec {
  * 按段取热评：只请求评论数最多的前 top 段，同时发出、整体限时，任何一段失败都只是不显示卡片。
  * request 里可用 para.index / para.count / para.text；text、likes 再加上请求结果 res。
  */
-export interface NativeChapterHotSpec {
+export interface NativeHotRequestSpec {
   /** 为假时不发热评请求（例如书源自己的热评开关）。 */
   when?: string;
   request: NativeRequestSpec;
@@ -221,7 +221,14 @@ export interface NativeChapterHotSpec {
   likes?: string;
 }
 
-export interface NativeHotCommentsSpec extends NativeChapterHotSpec {
+export interface NativeChapterHotSpec extends NativeHotRequestSpec {
+  /** 热评作者昵称（text 只给一条文字时用）。 */
+  user?: string;
+  /** 本章评论总数，数字或文字。 */
+  count?: string;
+}
+
+export interface NativeHotCommentsSpec extends NativeHotRequestSpec {
   /** 1 到 12，默认 6。 */
   top?: number;
 }
@@ -238,8 +245,8 @@ export interface NativeCommentsSpec {
    */
   hot?: string | NativeHotCommentsSpec;
   /**
-   * 本章说卡片上的热评（可选）。写成表达式时结果是文字或 { text, likes }；写成对象时发一个请求，
-   * 结果绑定为 res。与段落热评同时请求、同样限时。
+   * 本章说卡片上的热评（可选）。写成表达式时结果是文字、{ text, likes, user }、它们的列表，
+   * 或 { count, items }；写成对象时发一个请求，结果绑定为 res。与段落热评同时请求、同样限时。
    */
   chapterHot?: string | NativeChapterHotSpec;
   /** 段评页地址，可用 para.index / para.text / para.count。 */
@@ -948,7 +955,7 @@ export class NativeSourceSpec {
   }
 
   /** hot / chapterHot：表达式字符串，或含 request.url 与 text 的对象。 */
-  private static checkHotSpec(hot: string | NativeChapterHotSpec | undefined, path: string, errors: string[]): void {
+  private static checkHotSpec(hot: string | NativeHotRequestSpec | undefined, path: string, errors: string[]): void {
     if (hot === undefined || typeof hot === 'string') return;
     if (!hot || typeof hot !== 'object' || Array.isArray(hot)) {
       errors.push(`${path} 需要表达式，或含 request 和 text 的对象`);

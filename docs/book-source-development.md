@@ -1221,7 +1221,7 @@ function videoContent(ctx) {
 | `stats` | 统计接口，结果绑定为 `stats` |
 | `counts` | 每段评论数：对象的键（或列表下标）是正文行号，值是条数。行号按 `text` 结果的换行切分，从 0 开始。写了 `paragraphUrl` 或 `page` 时必填 |
 | `hot` | 可选，每段热评。写成表达式时，结果的键（或列表下标）同 `counts`，值是评论文字，或 `{ "text": "…", "likes": "1.2k" }`；统计接口本身不带评论原文时写成对象按段请求，见下。只对有气泡的段落生效，参考宿主在开启热评卡片时把它画在段落下方，点卡片与点气泡打开同一个评论页；取值失败只是不显示卡片 |
-| `chapterHot` | 可选，本章说卡片上显示的一条热评。写法同 `hot`：表达式结果是文字或 `{ "text", "likes" }`；对象只发一个请求、没有 `top` 和 `para`。需要同时有 `chapterUrl` 或 `chapterPage` |
+| `chapterHot` | 可选，本章说卡片上显示的热评与评论条数，见[本章说热评](#本章说热评)。需要同时有 `chapterUrl` 或 `chapterPage` |
 | `paragraphUrl` | 段评页地址，可用 `para.index`、`para.count`、`para.text`（该段前 90 个字） |
 | `chapterUrl` | 整章评论页地址，可用 `total`（各段条数之和）。有值时章末显示「本章说」入口 |
 | `page`、`chapterPage` | 内联段评／章评页面，见[内联评论页](#内联评论页点击后取数和生成-html)；需宿主接入支持 |
@@ -1251,6 +1251,28 @@ function videoContent(ctx) {
 | `likes` | 可选，点赞数，原样显示 |
 
 `chapterHot` 写成对象时与这些请求同时发出。这些请求整体最多等 4 秒，到时没回来或失败的段落只显示气泡，不影响正文。每章多出 `top` 个请求，按站点能承受的频率设置；接口要求顺序或限流严格时调小 `top`。
+
+#### 本章说热评
+
+`chapterHot` 给章末的本章说卡片提供几条热评和本章评论总数。写成表达式时直接取值；写成对象时只发一个请求（没有 `top` 和 `para`），请求结果绑定为 `res`：
+
+```json
+"chapterHot": {
+  "request": { "url": "/api/comments?chapter={{chapter.index}}&paragraph=-1&size=3" },
+  "text": "= map(res.items, x => ({ text: x.content, user: x.nick, likes: x.likes }))",
+  "count": "= res.total"
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `when` | 可选，为假时不发请求 |
+| `request` | 请求写法同 `stats` |
+| `text` | 热评。结果可以是一条文字、`{ "text", "user", "likes" }`、它们的列表，或 `{ "count", "items": [...] }`；最多保留 3 条，没有文字的条目跳过 |
+| `user`、`likes` | 可选，`text` 只给一条文字时的昵称与点赞数，原样显示 |
+| `count` | 可选，本章评论总数。数字（含 `1.2万`、`999+`）显示为“N条评论”，其他文字原样显示 |
+
+表达式写法的结果格式同 `text`。参考宿主把条数放在卡片标题行右侧，热评逐条列出昵称、点赞与最多两行正文；页面剩余空间不够时少显示几条，点卡片打开本章评论页。旧写法（只返回一条文字或 `{ "text", "likes" }`）照常可用。
 
 #### 内联评论页：点击后取数和生成 HTML
 
