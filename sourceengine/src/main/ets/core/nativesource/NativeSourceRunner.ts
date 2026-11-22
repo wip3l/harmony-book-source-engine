@@ -225,12 +225,22 @@ export interface NativeParagraphComment {
   /** 该段热评原文，空串表示没有。 */
   preview?: string;
   likes?: string;
+  /** 热评文字里表情代号的图片地址。 */
+  emojis?: Record<string, string>;
 }
 
-/** 本章说的热评列表与评论条数文字。 */
+/** 本章说的热评列表、评论条数文字与表情图片地址。 */
 export interface NativeChapterHot {
   hots: ReaderActionHot[];
   count: string;
+  emojis: Record<string, string>;
+}
+
+/** 一段热评：文字、点赞数与表情图片地址。 */
+export interface NativeHotEntry {
+  text: string;
+  likes: string;
+  emojis: Record<string, string>;
 }
 
 export interface NativeContentResult {
@@ -250,6 +260,7 @@ export interface NativeContentResult {
   /** 本章说卡片上的评论条数文字与热评列表（chapterHot），没有时不写。 */
   chapterCommentCount?: string;
   chapterCommentHots?: ReaderActionHot[];
+  chapterCommentEmojis?: Record<string, string>;
   /** 正文末尾的链接按钮。 */
   links: NativeContentLink[];
   /** 漫画的图片地址（kind 为 images 时）。 */
@@ -1190,17 +1201,24 @@ export class NativeSourceRunner {
     return result;
   }
 
-  /** hot 规则里某一行的热评：值是文字，或 { text, likes }。返回 [文字, 点赞数]。 */
-  private static hotEntry(hot: NativeValue, key: string): string[] {
-    if (!hot || typeof hot !== 'object') return ['', ''];
-    const value = (hot as Record<string, NativeValue>)[key];
-    if (typeof value === 'string' || typeof value === 'number') return [String(value), ''];
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return ['', ''];
+  /** hot 规则里某一行的热评：值是文字，或 { text, likes, emojis }。 */
+  private static hotEntry(hot: NativeValue, key: string): NativeHotEntry {
+    if (!hot || typeof hot !== 'object') return { text: '', likes: '', emojis: {} };
+    return NativeSourceRunner.hotValue((hot as Record<string, NativeValue>)[key]);
+  }
+
+  /** 一条热评的值：文字，或 { text, likes, emojis }（emojis 是 { 代号: 图片地址 } 或 [{ token, url }]）。 */
+  static hotValue(value: NativeValue): NativeHotEntry {
+    if (typeof value === 'string' || typeof value === 'number') return { text: String(value), likes: '', emojis: {} };
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return { text: '', likes: '', emojis: {} };
     const record = value as Record<string, NativeValue>;
-    const text = record['text'];
+    const text = typeof record['text'] === 'string' ? record['text'] as string : '';
     const likes = record['likes'];
-    return [typeof text === 'string' ? text : '',
-      typeof likes === 'string' || typeof likes === 'number' ? String(likes) : ''];
+    return {
+      text: text,
+      likes: typeof likes === 'string' || typeof likes === 'number' ? String(likes) : '',
+      emojis: ReaderActionMarker.normalizeEmojis(record['emojis'] as Object, [text])
+    };
   }
 
   /**
@@ -1230,10 +1248,16 @@ export class NativeSourceRunner {
       const response = await this.fetchValue(spec.request, paraScope);
       if (response === null || this.cancelled()) return;
       paraScope.set('res', response);
-      const text = NativeExpr.toText(await this.value(spec.text, paraScope)).trim();
+      // text 也可以直接给 { text, likes, emojis }。
+      const raw = await this.value(spec.text, paraScope);
+      const entry: NativeHotEntry = raw && typeof raw === 'object' && !Array.isArray(raw) ?
+        NativeSourceRunner.hotValue(raw) : { text: NativeExpr.toText(raw), likes: '', emojis: {} };
+      const text = entry.text.trim();
       if (!text) return;
-      const likes = spec.likes ? NativeExpr.toText(await this.value(spec.likes, paraScope)).trim() : '';
-      result[String(para.index)] = { text: text, likes: likes };
+      const likes = spec.likes ? NativeExpr.toText(await this.value(spec.likes, paraScope)).trim() : entry.likes;
+      const found: Record<string, NativeValue> = { text: text, likes: likes };
+      if (Object.keys(entry.emojis).length > 0) found['emojis'] = entry.emojis as Record<string, NativeValue>;
+      result[String(para.index)] = found;
     }).map((task: Promise<void>): Promise<void> => task.catch((): void => {}));
     if (work.length === 0) return result;
     let timer = -1;
@@ -1260,11 +1284,12 @@ export class NativeSourceRunner {
   }
 
   /**
-   * chapterHot 的结果：文字、{ text, likes, user }、它们的列表，或 { count, items }。
+   * chapterHot 的结果：文字、{ text, likes, user, emojis }、它们的列表，或 { count, items, emojis }。
    * 规则里单独写的 likes / user 只补给“结果只是一条文字”的情况。
    */
   static chapterHotValue(value: NativeValue, likes: string = '', user: string = ''): NativeChapterHot {
-    const found: NativeChapterHot = { hots: [], count: '' };
+    const found: NativeChapterHot = { hots: [], count: '', emojis: {} };
+    const rawEmojis: NativeValue[] = [];
     const one = (entry: NativeValue): void => {
       const hot = new ReaderActionHot();
       if (typeof entry === 'string' || typeof entry === 'number') {
@@ -1275,6 +1300,7 @@ export class NativeSourceRunner {
         const entryLikes = record['likes'];
         hot.likes = typeof entryLikes === 'string' || typeof entryLikes === 'number' ? String(entryLikes) : '';
         hot.user = typeof record['user'] === 'string' ? record['user'] as string : '';
+        if (record['emojis']) rawEmojis.push(record['emojis']);
       }
       found.hots.push(hot);
     };
@@ -1284,6 +1310,7 @@ export class NativeSourceRunner {
       const record = value as Record<string, NativeValue>;
       (record['items'] as NativeValue[]).slice(0, ReaderActionMarker.MAX_HOT_ITEMS * 2).forEach(one);
       found.count = NativeSourceRunner.chapterCountText(record['count']);
+      if (record['emojis']) rawEmojis.push(record['emojis']);
     } else {
       one(value);
       if (typeof value === 'string' || typeof value === 'number') {
@@ -1292,12 +1319,19 @@ export class NativeSourceRunner {
       }
     }
     found.hots = ReaderActionMarker.normalizeHots(found.hots);
+    const texts = found.hots.map((hot: ReaderActionHot): string => hot.text);
+    for (const raw of rawEmojis) {
+      const map = ReaderActionMarker.normalizeEmojis(raw as Object, texts);
+      for (const token of Object.keys(map)) {
+        if (found.emojis[token] === undefined) found.emojis[token] = map[token];
+      }
+    }
     return found;
   }
 
   /** 本章说的热评与评论条数。任何失败、超时都返回空，不影响正文。 */
   private async fetchChapterHot(spec: string | NativeChapterHotSpec, scope: NativeScope): Promise<NativeChapterHot> {
-    const empty: NativeChapterHot = { hots: [], count: '' };
+    const empty: NativeChapterHot = { hots: [], count: '', emojis: {} };
     try {
       if (typeof spec === 'string') return NativeSourceRunner.chapterHotValue(await this.value(spec, scope));
       if (spec.when && !NativeExpr.isTruthy(await this.value(spec.when, scope))) return empty;
@@ -1336,7 +1370,7 @@ export class NativeSourceRunner {
     const scope = page.scope.child();
     scope.set('stats', spec.stats ? await this.fetchValue(spec.stats, scope) : null);
     // 本章说热评与段落热评同时请求。
-    const noChapterHot: NativeChapterHot = { hots: [], count: '' };
+    const noChapterHot: NativeChapterHot = { hots: [], count: '', emojis: {} };
     const chapterHotTask: Promise<NativeChapterHot> = spec.chapterHot ?
       this.fetchChapterHot(spec.chapterHot, scope) : Promise.resolve(noChapterHot);
     const inline = !!(spec.page || spec.chapterPage);
@@ -1380,9 +1414,10 @@ export class NativeSourceRunner {
         if (url) {
           const comment: NativeParagraphComment = { line: line, count: count, url: url };
           const hotEntry = NativeSourceRunner.hotEntry(hot, key);
-          if (hotEntry[0]) {
-            comment.preview = hotEntry[0];
-            if (hotEntry[1]) comment.likes = hotEntry[1];
+          if (hotEntry.text) {
+            comment.preview = hotEntry.text;
+            if (hotEntry.likes) comment.likes = hotEntry.likes;
+            if (Object.keys(hotEntry.emojis).length > 0) comment.emojis = hotEntry.emojis;
           }
           result.paragraphComments.push(comment);
         }
@@ -1414,6 +1449,7 @@ export class NativeSourceRunner {
       result.chapterCommentPreview = chapterHot.hots[0].text;
       if (chapterHot.hots[0].likes) result.chapterCommentLikes = chapterHot.hots[0].likes;
       result.chapterCommentHots = chapterHot.hots;
+      if (Object.keys(chapterHot.emojis).length > 0) result.chapterCommentEmojis = chapterHot.emojis;
     }
     if (result.chapterCommentUrl && chapterHot.count) result.chapterCommentCount = chapterHot.count;
   }
