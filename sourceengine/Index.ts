@@ -45,6 +45,10 @@ export {
   SourceScriptNotice
 } from './src/main/ets/core/book/SourceScriptNotice';
 export {
+  SourceEventResult,
+  SourceEventCallback
+} from './src/main/ets/core/book/SourceEventCallback';
+export {
   BookTypeSupport
 } from './src/main/ets/core/book/BookTypeSupport';
 export {

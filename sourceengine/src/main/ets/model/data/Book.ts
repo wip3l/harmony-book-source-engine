@@ -464,6 +464,8 @@ export class ContentRule {
   imageDecode: string = '';
   imageStyle: string = '';
   payAction: string = '';
+  /** 事件回调脚本，书源的 eventListener 为真时由 SourceEventCallback 执行。 */
+  callBackJs: string = '';
 }
 
 export class ReplaceRule {
