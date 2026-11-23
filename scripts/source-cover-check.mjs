@@ -18,6 +18,7 @@ try {
     const NativeSourceCrypto = { decryptBytes(a, data, key, iv) {
       const k = Buffer.from(key, 'hex');
       const cipher = crypto.createDecipheriv('aes-' + k.length * 8 + '-cbc', k, Buffer.from(iv, 'hex'));
+      if (/NoPadding$/i.test(a)) cipher.setAutoPadding(false);
       return new Uint8Array(Buffer.concat([cipher.update(data), cipher.final()]));
     }, async decryptBytesAsync(...args) { return this.decryptBytes(...args); } };
     const NativeSourceSpec = globalThis.__coverCheckSpec;\n` + code;
@@ -35,6 +36,14 @@ try {
   assert.deepEqual(Buffer.from(await decoder.decodeAsync(encrypted, spec)), png);
   assert.deepEqual(Buffer.from(decoder.decode(encrypted.subarray(16), { ...spec, ivPrefixBytes: 0, iv: iv.toString('hex') })), png);
   assert.equal(decoder.decode(png, spec), png);
+  // NoPadding: whole-block ciphertext, plaintext keeps its zero tail; image formats ignore trailing bytes.
+  const zeroPadded = Buffer.concat([png, Buffer.alloc(16 - png.length % 16)]);
+  const rawCipher = crypto.createCipheriv('aes-128-cbc', Buffer.from(key), iv).setAutoPadding(false);
+  const noPadding = Buffer.concat([rawCipher.update(zeroPadded), rawCipher.final()]);
+  const noPaddingSpec = { algorithm: 'AES/CBC/NoPadding', key, keyEncoding: 'utf8', iv: iv.toString('hex') };
+  assert.deepEqual(Buffer.from(await decoder.decodeAsync(noPadding, noPaddingSpec)), zeroPadded);
+  assert.throws(() => decoder.decode(noPadding.subarray(1), noPaddingSpec), /Truncated/);
+  assert.throws(() => decoder.decode(noPadding, { ...noPaddingSpec, algorithm: 'AES/CTR/NoPadding' }));
   assert.throws(() => decoder.decode(encrypted.subarray(1), spec));
   assert.throws(() => decoder.decode(new Uint8Array(decoder.MAX_BYTES + 1), spec));
   assert.throws(() => decoder.decode(encrypted, { ...spec, key: 'bad' }));
@@ -55,6 +64,8 @@ try {
   const definition = { nativeSource: 1, name: 'test', url: 'https://example.com', coverDecode: spec,
     search: stage, explore: { ...stage, menus: [{ title: 'test', url: '/list' }] }, detail: { fields: { coverUrl: '=data[0].cover' } } };
   assert.deepEqual(Spec.validate(definition), []);
+  assert.deepEqual(Spec.validate({ ...definition, coverDecode: noPaddingSpec }), [], 'NoPadding covers import');
+  assert.equal(Spec.validate({ ...definition, coverDecode: { ...noPaddingSpec, algorithm: 'AES/ECB/NoPadding' } }).length, 1);
   // Import rejects keys the decoder would refuse, instead of failing on every cover later.
   for (const bad of [{ key: '0123456789abcde' }, { key: 'abc', keyEncoding: 'hex' }, { key: '00'.repeat(15), keyEncoding: 'hex' },
     { key: '0123456789abcdef', keyEncoding: 'base64' }, { key: 'g'.repeat(32), keyEncoding: 'hex' }, { key: '' }]) {

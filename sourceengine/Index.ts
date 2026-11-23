@@ -58,6 +58,7 @@ export {
 } from './src/main/ets/core/book/EncodedSourceUrl';
 export {
   ReaderActionData,
+  ReaderActionHot,
   ReaderActionMatch,
   ReaderActionMarker
 } from './src/main/ets/core/book/ReaderActionMarker';

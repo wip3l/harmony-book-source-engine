@@ -217,6 +217,64 @@ try {
   exprChapter.content.comments.chapterHot = '= "表达式本章热评"';
   assert.equal((await new Runner(exprChapter, chapterHost, {}).content(book, chapter)).chapterCommentPreview,
     '表达式本章热评');
+  const hotsOf = content => (content.chapterCommentHots ?? []).map(hot => [hot.user, hot.text, hot.likes]);
+  assert.deepEqual(hotsOf(chapterContent), [['', '本章热评', '13662']], 'the old single-text form is one hot comment');
+  // A list of hot comments with nicknames, and the chapter's comment count for the title row.
+  const listChapter = structuredClone(chapterDef);
+  listChapter.content.comments.chapterHot = { request: { url: '/hot/-1' },
+    text: '= map(res.list, x => ({ text: x.content, user: x.nick, likes: x.likeCount }))', count: '= res.total' };
+  assert.deepEqual(Spec.validate(listChapter), []);
+  const listHost = createTestHost(JsonPathEvaluator, async (req) => {
+    if (req.url.includes('/stats')) return { counts: { 0: 2 } };
+    if (req.url.includes('/hot/-1')) return { total: 79, list: [{ content: '第一条', nick: '甲', likeCount: 29 },
+      { content: '', nick: '空的', likeCount: 1 }, { content: '第二条', nick: '乙', likeCount: '1.2万' },
+      { content: '第三条', nick: '丙' }, { content: '第四条', nick: '丁' }] };
+    if (req.url.includes('/hot/')) return { list: [] };
+    return { text: '第一段' };
+  });
+  const listed = await new Runner(listChapter, listHost, {}).content(book, chapter);
+  assert.deepEqual(hotsOf(listed), [['甲', '第一条', '29'], ['乙', '第二条', '1.2万'], ['丙', '第三条', '']],
+    'empty comments are skipped and at most three are kept');
+  assert.equal(listed.chapterCommentCount, '79条评论');
+  assert.equal(listed.chapterCommentPreview, '第一条', 'the first hot comment still fills the old fields');
+  assert.equal(listed.chapterCommentLikes, '29');
+  const singleChapter = structuredClone(chapterDef);
+  singleChapter.content.comments.chapterHot.user = "= 'UP主'";
+  singleChapter.content.comments.chapterHot.count = "= '全部 3 条'";
+  const single = await new Runner(singleChapter, chapterHost, {}).content(book, chapter);
+  assert.deepEqual(hotsOf(single), [['UP主', '本章热评', '13662']]);
+  assert.equal(single.chapterCommentCount, '全部 3 条', 'a count that is not a number is shown as written');
+  const shapeChapter = structuredClone(chapterDef);
+  shapeChapter.content.comments.chapterHot = "= { count: '1.2万', items: [{ text: '甲说', user: '甲' }, '乙说'] }";
+  const shaped = await new Runner(shapeChapter, chapterHost, {}).content(book, chapter);
+  assert.deepEqual(hotsOf(shaped), [['甲', '甲说', ''], ['', '乙说', '']]);
+  assert.equal(shaped.chapterCommentCount, '1.2万条评论');
+  // 表情代号的图片地址：条目里的 emojis 与整体的 emojis 合并；没出现在文字里、不是 http(s) 的丢掉。
+  const emojiChapter = structuredClone(chapterDef);
+  emojiChapter.content.comments.chapterHot = "= { items: [{ text: '好[吃瓜][吃瓜]', emojis: { '[吃瓜]': 'https://e.example.com/gua.png', '[无]': 'https://e.example.com/no.png' } }," +
+    " { text: '妙[赞]', emojis: [{ token: '[赞]', url: 'https://e.example.com/zan.png' }] }], emojis: { '[赞]': 'https://e.example.com/other.png', '[哭]': 'javascript:1' } }";
+  const emojied = await new Runner(emojiChapter, chapterHost, {}).content(book, chapter);
+  assert.deepEqual(emojied.chapterCommentEmojis, { '[吃瓜]': 'https://e.example.com/gua.png', '[赞]': 'https://e.example.com/zan.png' });
+  const Marker = mods.ReaderActionMarker;
+  const emojiMarker = Marker.create('本章说', 'https://example.com/c', '本章说', '', '', '', emojied.chapterCommentHots,
+    emojied.chapterCommentEmojis);
+  assert.deepEqual(Marker.parse(emojiMarker).emojis, emojied.chapterCommentEmojis, 'emojis survive the marker');
+  assert.equal(Marker.create('本章说', 'https://example.com/c', '本章说'), Marker.create('本章说', 'https://example.com/c', '本章说', '', '', '', [], {}),
+    'no emojis keeps the old marker');
+  assert.deepEqual(Marker.parse(Marker.create('段评 3', 'https://example.com/p', '段评', '前[笑]后', '', '', [],
+    { '[笑]': 'https://e.example.com/x.png', 'a b': 'https://e.example.com/y.png' })).emojis, { '[笑]': 'https://e.example.com/x.png' });
+  const emojiHotDef = structuredClone(hotDef);
+  emojiHotDef.content.comments.hot.text = "= { text: first(res.list).content, emojis: { '[赞]': 'https://e.example.com/zan.png' } }";
+  delete emojiHotDef.content.comments.hot.likes;
+  const emojiHotHost = createTestHost(JsonPathEvaluator, async (req) => {
+    if (req.url.includes('/stats')) return { counts: { 0: 2, 1: 9 } };
+    if (req.url.includes('/hot/1')) return { list: [{ content: '写得好[赞]' }] };
+    if (req.url.includes('/hot/')) return { list: [] };
+    return { text: '第一段\n第二段' };
+  });
+  const emojiHot = await new Runner(emojiHotDef, emojiHotHost, {}).content(book, chapter);
+  assert.deepEqual(emojiHot.paragraphComments.map(item => [item.line, item.preview ?? '', item.emojis ?? null]),
+    [[0, '', null], [1, '写得好[赞]', { '[赞]': 'https://e.example.com/zan.png' }]]);
   const failChapter = structuredClone(chapterDef);
   failChapter.content.comments.chapterHot.request.url = '/broken';
   const failHost = createTestHost(JsonPathEvaluator, async (req) => {

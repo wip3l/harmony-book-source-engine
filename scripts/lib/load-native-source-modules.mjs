@@ -22,6 +22,7 @@ const MODULES = [
   'core/nativesource/NativeSourceInteraction.ts',
   'core/nativesource/NativeSourceSpec.ts',
   'core/nativesource/NativePureRule.ts',
+  'core/book/ReaderActionMarker.ts',
   'core/nativesource/NativeSourceRunner.ts',
   'core/nativesource/NativeCommentPage.ts',
   'model/data/Book.ts',

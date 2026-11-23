@@ -327,6 +327,61 @@ try {
   }
   equal(badMethod, '请求方法无效：G T', '无效的请求方法给出明确报错');
 
+  // 发现页 maxPage：超过上限不发请求、返回空列表；分类上的 maxPage 覆盖 explore 上的。
+  const pageCapped = JSON.parse(JSON.stringify(sample));
+  pageCapped.explore.maxPage = 10;
+  pageCapped.explore.menus = [
+    { title: '书库', url: '{{server}}/rank?page={{page}}' },
+    { title: '短榜', url: '{{server}}/rank?page={{page}}', maxPage: 2 }
+  ];
+  const cappedHost = createTestHost(JsonPathEvaluator, respond);
+  const cappedRunner = new NativeSourceRunner(NativeSourceSpec.fromObject(pageCapped), cappedHost,
+    { server: 'https://api.example.com' });
+  const cappedTargets = (await cappedRunner.exploreMenus()).map((m) => m.target);
+  equal((await cappedRunner.explore(cappedTargets[0], 10)).length, 1, 'maxPage 这一页照常请求');
+  const cappedBefore = cappedHost.requests.length;
+  equal(await cappedRunner.explore(cappedTargets[0], 11), [], '超过 maxPage 返回空列表');
+  equal(await cappedRunner.explore(cappedTargets[1], 3), [], '分类自己的 maxPage 覆盖 explore 的');
+  equal(cappedHost.requests.length, cappedBefore, '超过 maxPage 不发请求');
+  const badCap = JSON.parse(JSON.stringify(pageCapped));
+  badCap.explore.maxPage = 0;
+  await rejectsWith(Promise.resolve().then(() => NativeSourceSpec.fromObject(badCap)),
+    /explore\.maxPage 必须是 1 到 10000 的整数/, 'maxPage 必须是正整数');
+
+  // 顶层 charset 是所有请求的默认编码，阶段上写的优先。
+  const gbkSource = JSON.parse(JSON.stringify(pageCapped));
+  delete gbkSource.explore.maxPage;
+  gbkSource.charset = 'gbk';
+  gbkSource.explore.menus[1].maxPage = undefined;
+  gbkSource.explore.charset = 'utf-8';
+  const gbkHost = createTestHost(JsonPathEvaluator, respond);
+  const gbkRunner = new NativeSourceRunner(NativeSourceSpec.fromObject(gbkSource), gbkHost,
+    { server: 'https://api.example.com', mode: '听书' });
+  await gbkRunner.search('总裁', 1);
+  equal(gbkHost.requests[gbkHost.requests.length - 1].charset, 'gbk', '阶段没写 charset 时用顶层的');
+  await gbkRunner.explore((await gbkRunner.exploreMenus())[0].target, 1);
+  equal(gbkHost.requests[gbkHost.requests.length - 1].charset, 'utf-8', '阶段上写的 charset 优先');
+  const badCharset = JSON.parse(JSON.stringify(gbkSource));
+  badCharset.charset = 936;
+  await rejectsWith(Promise.resolve().then(() => NativeSourceSpec.fromObject(badCharset)), /charset 必须是字符串/,
+    '顶层 charset 必须是字符串');
+
+  // 导入期提示：不拦截导入，只列出会静默失效的写法。
+  const warned = JSON.parse(JSON.stringify(sample));
+  warned.rate = 800;
+  warned.toc = Object.assign({}, warned.toc, { batch: 8 });
+  warned.search = Object.assign({}, warned.search, { fields: Object.assign({}, warned.search.fields, {
+    lastChapter: 'li span:last-child@text', intro: 'li:nth-child(2n+1)@text', status: 'li:first-child@text',
+    wordCount: 'a[href^=javascript:void]@text', kind: 'p:contains(作者:甲)@text##a##b##c'
+  }) });
+  const warnings = NativeSourceSpec.warningsOf(warned);
+  equal(warnings.length, 3, '纯数字 rate 配 batch 与两处不支持的伪类各一条');
+  equal(/rate 写成纯数字/.test(warnings[0]) && /toc\.batch/.test(warnings[0]), true, 'rate 提示指出受影响的 batch');
+  equal(warnings.slice(1).map((w) => w.split('：')[0]), ['search.fields.lastChapter', 'search.fields.intro'],
+    '伪类提示指出字段位置');
+  equal(NativeSourceSpec.warningsOf(sample), [], '示例书源没有提示');
+  equal(NativeSourceSpec.warningsOf({ sourceFormat: 'native' }), [], '定义不合法时不给提示（由校验报错）');
+
   const hidden = new NativeSourceRunner(definition, runHost, { mode: '不存在的值' });
   equal((await hidden.exploreMenus()).map((m) => m.title).includes('仅听书'), false, '非法变量值回退默认值');
 
@@ -363,6 +418,50 @@ try {
   equal([chapters[0].isVip, chapters[1].isVip], [false, true], 'VIP 标记');
   equal(chapters[0].tag.length > 0, true, '更新时间');
   equal((await runner.toc(book, 1)).length, 1, '目录条数上限');
+
+  // 章节更新时间与字数：updateTime、wordCount 与书籍字段同名，脚本返回同名键也能取到。
+  const timed = JSON.parse(JSON.stringify(sample));
+  timed.toc.fields = Object.assign({}, timed.toc.fields, { updateTime: '$.update_time', wordCount: '= 3630' });
+  delete timed.toc.fields.tag;
+  const timedChapters = await new NativeSourceRunner(NativeSourceSpec.fromObject(timed), runHost,
+    { mode: '听书', server: 'https://api.example.com/' }).toc(book);
+  equal([timedChapters[0].updateTime, timedChapters[0].wordCount, timedChapters[0].tag], ['1700000000', '3630', ''],
+    '章节 updateTime、wordCount');
+
+  // 图文 + 视频混排：书是 text，目录给视频章标 type: video，正文按章节类型取 text 或 video。
+  const mixed = NativeSourceSpec.fromObject({
+    sourceFormat: 'native', name: '混排', url: 'https://mix.example', type: 'text',
+    search: { url: '/s?q={{key}}', list: '$.list[*]', fields: { name: '$.name', bookUrl: '$.url' } },
+    toc: { list: '$.chapters[*]', fields: { title: '$.title', url: '$.url', type: "= $.video ? 'video' : 'text'" } },
+    content: { text: '$.text', video: '$.video' }
+  });
+  const mixedHost = createTestHost(JsonPathEvaluator, async (request) => request.url.includes('/toc') ?
+    { chapters: [{ title: '正文', url: '/a' }, { title: '正片 1', url: '/a?seg=1', video: true }] } :
+    { text: '第一段', video: 'https://cdn.example/1.m3u8' });
+  const mixedRunner = new NativeSourceRunner(mixed, mixedHost, {});
+  const mixedChapters = await mixedRunner.toc({ bookUrl: 'https://mix.example/toc', tocUrl: '', name: '书', author: '',
+    kind: '', type: 'text', vars: {} });
+  equal(mixedChapters.map((c) => c.type), ['text', 'video'], '目录给出章节类型');
+  const textPart = await mixedRunner.content({ bookUrl: 'https://mix.example/toc', type: 'text', vars: {} },
+    { url: 'https://mix.example/a', title: '正文', index: 0, type: 'text' });
+  equal([textPart.kind, textPart.text], ['text', '第一段'], '普通章节按书籍类型取正文');
+  const videoPart = await mixedRunner.content({ bookUrl: 'https://mix.example/toc', type: 'text', vars: {} },
+    { url: 'https://mix.example/a?seg=1', title: '正片 1', index: 1, type: 'video' }, true);
+  equal([videoPart.kind, videoPart.text], ['video', 'https://cdn.example/1.m3u8'], '视频章按 video 规则取');
+  if (mods.BookChapter) {
+    const typed = new mods.BookChapter();
+    typed.variable = JSON.stringify({ baseUrl: 'x', type: 'video' });
+    equal([mods.BookChapter.typeOf(typed), mods.BookChapter.isVideoChapter(typed)], ['video', true], '章节变量里的类型');
+  }
+  if (mods.BookChapter) {
+    const meta = new mods.BookChapter();
+    meta.variable = JSON.stringify({ updateTime: '2017-09-27 10:45:05', wordCount: '3630' });
+    equal(mods.BookChapter.metaTextOf(meta), '2017-09-27 10:45:05 · 3630字', '目录第二行：时间原文、字数补“字”');
+    meta.variable = JSON.stringify({ wordCount: '约3千字' });
+    equal(mods.BookChapter.metaTextOf(meta), '约3千字', '只有字数');
+    meta.variable = JSON.stringify({ baseUrl: 'https://x' });
+    equal(mods.BookChapter.metaTextOf(meta), '', '没有时间和字数时为空');
+  }
 
   // nextUrl 一次给出多个地址：剩余目录页每批 4 页并发、按列出顺序解析，不跟随这些页自己的 nextUrl。
   const paged = JSON.parse(JSON.stringify(sample));

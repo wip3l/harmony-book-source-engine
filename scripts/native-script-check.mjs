@@ -187,6 +187,11 @@ try {
   });
   let host = scriptHost(respond);
   const books = await new NativeSourceRunner(searchSource, host, {}).search('斗破', 1);
+  // 聚合书源可以给每条结果标分站 site；没写的为空。
+  const sited = await new NativeSourceRunner(define({ ...base, search: { script: 'search' },
+    js: "function search() { return [{ name: '甲', bookUrl: '/a', site: '分站一' }, { name: '乙', bookUrl: '/b' }]; }" }),
+    scriptHost(respond), {}).search('x', 1);
+  equal(sited.map((b) => b.site || ''), ['分站一', ''], '脚本结果按同名键取 site');
   equal(books.map((b) => [b.name, b.author, b.bookUrl]), [
     ['斗破', '土豆', 'https://api.example.com/b/1'],
     ['凡人', '忘语', 'https://api.example.com/b/2'],
@@ -484,6 +489,52 @@ try {
   host = scriptHost(respond);
   host.browserAnswer = { body: '', error: '网页操作已取消' };
   await rejects(new NativeSourceRunner(uiSource, host, {}).detail(book), /网页操作已取消/, '用户取消网页时脚本得到原因');
+
+  // 后台调用（书架检查更新、预加载、冷却期）：详情/目录/正文脚本也不弹网页，verify 改走「去验证」，open 跳过。
+  host = scriptHost(respond);
+  host.canInteract = () => false;
+  await rejects(new NativeSourceRunner(uiSource, host, {}).detail(book), /需要网页验证（过一下验证），请点「去验证」后重试/,
+    '后台运行的详情脚本里 browser.verify 不弹网页');
+  equal([host.ui.opened.length, host.ui.verifications.map((v) => v.url)], [0, ['https://api.example.com/verify']],
+    '后台运行时改走应用的「去验证」');
+  const backgroundOpen = define({ ...base, js: 'function detail(ctx) { browser.open("/help"); return { name: "照常" }; }',
+    detail: { script: 'detail' } });
+  host = scriptHost(respond);
+  host.canInteract = () => false;
+  equal((await new NativeSourceRunner(backgroundOpen, host, {}).detail(book)).name, '照常',
+    '后台运行时 browser.open 直接跳过，阶段照常完成');
+  equal(host.ui.opened.length, 0, '后台运行时 browser.open 不打开网页');
+  host = scriptHost(respond);
+  host.canInteract = () => false;
+  const actionVerify = define({ ...base, js: 'function go(ctx) { browser.verify("/verify"); return "好"; }',
+    actions: [{ label: '验证', script: 'go' }] });
+  equal(await new NativeSourceRunner(actionVerify, host, {}).runAction(0), '好', '设置页按钮是用户点的，不受后台标记影响');
+  equal(host.ui.opened.length, 1, '设置页按钮里的 browser.verify 照常弹出网页');
+
+  // 变量没取到值拼出的地址（undefined/null）直接报书源错误，不打开空白页。
+  for (const [arg, label] of [['"/" + ctx.missing', '/undefined'], ['ctx.missing', 'undefined'],
+    ['"https://x.example.com/c?id=" + null', '?id=null'], ['""', '空']]) {
+    const badUrl = define({ ...base, js: `function detail(ctx) { browser.verify(${arg}); return {}; }`,
+      detail: { script: 'detail' } });
+    host = scriptHost(respond);
+    await rejects(new NativeSourceRunner(badUrl, host, {}).detail(book), /网页地址无效：.*书源脚本没有给出有效地址/,
+      `无效网页地址 ${label} 报书源错误`);
+    equal(host.ui.opened.length + host.ui.verifications.length, 0, `无效网页地址 ${label} 不打开网页`);
+  }
+  const badOpen = define({ ...base, js: 'function detail(ctx) { browser.open("/book/" + ctx.missing + "/read"); return {}; }',
+    detail: { script: 'detail' } });
+  await rejects(new NativeSourceRunner(badOpen, scriptHost(respond), {}).detail(book), /网页地址无效：\/book\/undefined\/read/,
+    'browser.open 的地址中间有 undefined 也报错');
+
+  // 冷却期：用户关掉验证页后 10 分钟内不再自动弹出，完成验证后恢复。
+  const { NativeSourceInteraction } = mods;
+  NativeSourceInteraction.noteDeclined('src-a', 1000);
+  equal([NativeSourceInteraction.isDeclined('src-a', 1000 + 60000), NativeSourceInteraction.isDeclined('src-b', 2000)],
+    [true, false], '关掉验证页后该书源进入冷却，其他书源不受影响');
+  equal(NativeSourceInteraction.isDeclined('src-a', 1000 + NativeSourceInteraction.DECLINE_COOLDOWN_MS), false, '冷却期满后恢复');
+  NativeSourceInteraction.noteDeclined('src-a', 5000);
+  NativeSourceInteraction.clearDeclined('src-a');
+  equal(NativeSourceInteraction.isDeclined('src-a', 5001), false, '用户完成验证后立即恢复');
   const noUi = scriptHost(respond);
   delete noUi.toast;
   await rejects(new NativeSourceRunner(uiSource, noUi, {}).detail(book), /当前环境不支持提示/, '没有界面端口时明确报错');
@@ -510,6 +561,21 @@ try {
   });
   equal(NativeSourceRunner.resolveVars(optionDefinition, { line: '乙', mode: '漫画' }), { line: '乙', mode: '小说' },
     '写了 optionsScript 的变量保留脚本给出的值，其余变量不在 options 里仍回退');
+  // 变量的显示条件 when：只读 vars，联动的几项可以共用显示名；为假的项不显示但值保留。
+  const linked = define({ ...base, vars: [
+    { key: 'mode', label: '模式', options: ['小说', '听书'], filter: true },
+    { key: 'site_novel', label: '源站', options: ['全部', '甲'], filter: true, when: "= vars.mode == '小说'" },
+    { key: 'site_audio', label: '源站', options: ['全部', '丙'], filter: true, when: "= vars.mode == '听书'" },
+    { key: 'broken', when: '= nothing.here.x' },
+  ] });
+  equal(NativeSourceRunner.visibleVars(linked, {}).map((item) => item.key), ['mode', 'site_novel', 'broken'],
+    '默认模式只显示对应的源站；条件求值出错的项照常显示');
+  equal(NativeSourceRunner.visibleVars(linked, { mode: '听书', site_novel: '甲' }).map((item) => item.key),
+    ['mode', 'site_audio', 'broken'], '换模式后显示另一组源站');
+  equal(NativeSourceRunner.resolveVars(linked, { mode: '听书', site_novel: '甲' }).site_novel, '甲', '不显示的项值保留');
+  let whenError = '';
+  try { define({ ...base, vars: [{ key: 'a', when: 'vars.b' }] }); } catch (e) { whenError = e.message; }
+  equal(/vars.a.when 必须是 = 开头的表达式/.test(whenError), true, 'when 不是表达式时导入报错');
   equal(NativeSourceRunner.resolveVars(optionDefinition, { line: '' }), { line: '甲', mode: '小说' },
     'optionsScript 变量没有保存值时用默认值');
 

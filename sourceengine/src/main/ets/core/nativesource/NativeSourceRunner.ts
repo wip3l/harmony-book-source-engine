@@ -5,6 +5,7 @@
  */
 
 import { CooperativeScheduler } from '../concurrency/CooperativeScheduler';
+import type { BookSourceStageRate } from '../http/BookSourceRateLimiter';
 import { HttpRetryPolicy } from '../http/HttpRetryPolicy';
 import type { HttpRetrySpec } from '../http/HttpRetryPolicy';
 import { NativeExpr, NativeExprError, NativeScope } from './NativeExpr';
@@ -12,6 +13,7 @@ import { SourceCoverUrl } from './SourceCoverUrl';
 import { NativePureRule } from './NativePureRule';
 import { NativeJsPrelude } from './NativeJsPrelude';
 import { NativeCommentPage } from './NativeCommentPage';
+import { ReaderActionHot, ReaderActionMarker } from '../book/ReaderActionMarker';
 import { NativeScriptHost, NativeScriptLimits } from './NativeScriptHost';
 import type { NativeScriptEngine } from './NativeScriptHost';
 import type { NativeBrowserResult } from './NativeSourceInteraction';
@@ -40,6 +42,10 @@ export interface NativeRequest {
   primary: boolean;
   /** 网页渲染后在页面里执行的表达式（脚本的 browser.render），结果作为响应正文。 */
   webJs?: string;
+  /** 所在阶段写了自己的 rate：按这个阶段单独排队，不占顶层 rate 的名额。没写时不带，沿用顶层。 */
+  stageRate?: BookSourceStageRate;
+  /** 脚本请求写了 responseType: 'bytes'：取原始字节，结果放在 NativeResponse.bodyBase64。 */
+  binary?: boolean;
 }
 
 export interface NativeLoginState {
@@ -70,6 +76,8 @@ export interface NativeResponse {
   headersAvailable?: boolean;
   requestId?: string;
   error: string;
+  /** binary 请求的响应字节（Base64），此时 body 为空。 */
+  bodyBase64?: string;
 }
 
 /** 一条规则的求值记录，供调试页显示。 */
@@ -138,6 +146,11 @@ export interface NativeRunnerHost extends NativeExprHost {
   openBrowser?(url: string, title: string, wait: boolean, userAgent?: string): Promise<NativeBrowserResult>;
   /** 非交互场景需要网页验证时，交给应用现有的「去验证」流程。 */
   requestVerification?(url: string, title: string, userAgent?: string): void;
+  /**
+   * 详情、目录、正文脚本这次能不能弹出网页。书架检查更新、预加载邻章、缓存下载等后台调用返回 false，
+   * 用户刚在验证页点了返回的书源在冷却期内也返回 false。不提供时视为可以。
+   */
+  canInteract?(): boolean;
 }
 
 /** 设置页动态选项的结果：失败时 options 为空、error 为原因。 */
@@ -160,6 +173,8 @@ export interface NativeBookRecord {
   tocUrl: string;
   /** text | audio | comic | video，空串表示沿用书源类型。 */
   type: string;
+  /** 聚合书源里这条结果来自哪个分站；普通书源不写。宿主可以据此按分站分别计搜索上限。 */
+  site?: string;
   keep: Record<string, string>;
 }
 
@@ -177,6 +192,8 @@ export interface NativeChapterInput {
   url: string;
   title: string;
   index: number;
+  /** 目录给出的章节类型；video 表示图文书里的视频章，正文按 video 规则取。 */
+  type?: string;
 }
 
 export interface NativeChapterRecord {
@@ -186,6 +203,12 @@ export interface NativeChapterRecord {
   isPay: boolean;
   isVolume: boolean;
   tag: string;
+  /** 章节更新时间（文本或时间戳），存进章节变量 updateTime，目录里显示在章节名下方。 */
+  updateTime: string;
+  /** 章节字数，存进章节变量 wordCount。 */
+  wordCount: string;
+  /** 章节类型：空或 text 是普通章节，video 是图文书里的视频章。 */
+  type: string;
 }
 
 export interface NativeMenuEntry {
@@ -202,6 +225,22 @@ export interface NativeParagraphComment {
   /** 该段热评原文，空串表示没有。 */
   preview?: string;
   likes?: string;
+  /** 热评文字里表情代号的图片地址。 */
+  emojis?: Record<string, string>;
+}
+
+/** 本章说的热评列表、评论条数文字与表情图片地址。 */
+export interface NativeChapterHot {
+  hots: ReaderActionHot[];
+  count: string;
+  emojis: Record<string, string>;
+}
+
+/** 一段热评：文字、点赞数与表情图片地址。 */
+export interface NativeHotEntry {
+  text: string;
+  likes: string;
+  emojis: Record<string, string>;
 }
 
 export interface NativeContentResult {
@@ -215,9 +254,13 @@ export interface NativeContentResult {
   paragraphComments: NativeParagraphComment[];
   /** 整章评论页地址，空串表示没有。 */
   chapterCommentUrl: string;
-  /** 本章说卡片上的热评原文与点赞数（chapterHot），没有时不写。 */
+  /** 本章说卡片上的热评原文与点赞数（chapterHot 第一条），没有时不写。 */
   chapterCommentPreview?: string;
   chapterCommentLikes?: string;
+  /** 本章说卡片上的评论条数文字与热评列表（chapterHot），没有时不写。 */
+  chapterCommentCount?: string;
+  chapterCommentHots?: ReaderActionHot[];
+  chapterCommentEmojis?: Record<string, string>;
   /** 正文末尾的链接按钮。 */
   links: NativeContentLink[];
   /** 漫画的图片地址（kind 为 images 时）。 */
@@ -297,12 +340,15 @@ type StageReuse = '' | 'keep' | 'take';
 const MENU_STATIC = 'native:menu:';
 /** 脚本阶段不写 fields 时，按同名键取值的字段。 */
 const BOOK_FIELD_NAMES = ['name', 'author', 'kind', 'intro', 'coverUrl', 'wordCount', 'lastChapter', 'updateTime',
-  'status', 'bookUrl', 'tocUrl', 'type'];
-const CHAPTER_FIELD_NAMES = ['title', 'url', 'isVip', 'isPay', 'isVolume', 'tag'];
+  'status', 'bookUrl', 'tocUrl', 'type', 'site'];
+const CHAPTER_FIELD_NAMES = ['title', 'url', 'isVip', 'isPay', 'isVolume', 'tag', 'updateTime', 'wordCount', 'type'];
 const STAGE_NAMES: Record<string, string> = {
   '搜索': 'search', '发现': 'explore', '详情': 'detail', '目录': 'toc', '正文': 'content', '发现分类': 'menus'
 };
 const MENU_ITEM = 'native:item:';
+/** 可以写自己 rate 的阶段，以及作用域里记当前阶段的名字。 */
+const RATE_STAGES = ['search', 'explore', 'detail', 'toc', 'content'];
+const STAGE_SCOPE_KEY = '__stage';
 const MAX_TOC_PAGES = 1000;
 /** 目录或正文的 nextUrl 一次给出多个地址时，剩余分页每批并发请求的页数；书源可用 batch 改为 1～16。 */
 const DEFAULT_PAGE_BATCH = 4;
@@ -576,9 +622,33 @@ export class NativeSourceRunner {
     return values;
   }
 
+  /**
+   * 按各变量的 when 判断现在该显示哪些：表达式只读得到 vars（当前值），求值出错时照常显示，
+   * 避免一条写错的条件把设置项藏起来改不了。没写 when 的总是显示。
+   */
+  static visibleVars(definition: NativeSourceDefinition, stored: Record<string, NativeValue>): NativeVarSpec[] {
+    const all = definition.vars || [];
+    if (!all.some((item: NativeVarSpec): boolean => typeof item.when === 'string')) return all.slice();
+    const values = NativeSourceRunner.resolveVars(definition, stored);
+    const expr = new NativeExpr({
+      jsonPath: (): NativeValue[] => [],
+      select: (): string[] => [],
+      digest: (): string => ''
+    });
+    const scope = new NativeScope().set('vars', values as Record<string, NativeValue>);
+    return all.filter((item: NativeVarSpec): boolean => {
+      if (typeof item.when !== 'string') return true;
+      try {
+        return NativeExpr.isTruthy(expr.evaluate(item.when.trim().replace(/^=/, ''), scope));
+      } catch (e) {
+        return true;
+      }
+    });
+  }
+
   async search(key: string, page: number = 1): Promise<NativeBookRecord[]> {
     const stage = this.scripted(this.requireStage(this.definition.search, '搜索'), BOOK_FIELD_NAMES);
-    const scope = (await this.baseScope()).set('key', key).set('page', page);
+    const scope = (await this.baseScope('search')).set('key', key).set('page', page);
     const listener = this.partialSearchListener;
     // 脚本在后台线程里同步等宿主，而解析一批可能要用脚本引擎本身求字段表达式，所以不在宿主调用里解析：
     // 先排进队列让脚本继续搜下一个站，各批按顺序解析后交给 listener，最后的结果等队列清空后再读。
@@ -621,7 +691,7 @@ export class NativeSourceRunner {
 
   async exploreMenus(): Promise<NativeMenuEntry[]> {
     const explore = this.requireStage(this.definition.explore, '发现');
-    const scope = (await this.baseScope());
+    const scope = (await this.baseScope('explore'));
     const entries: NativeMenuEntry[] = [];
     const menus = explore.menus || [];
     for (let i = 0; i < menus.length; i++) {
@@ -702,7 +772,7 @@ export class NativeSourceRunner {
 
   async explore(target: string, page: number = 1): Promise<NativeBookRecord[]> {
     const explore = this.scripted(this.requireStage(this.definition.explore, '发现'), BOOK_FIELD_NAMES);
-    const scope = (await this.baseScope()).set('page', page);
+    const scope = (await this.baseScope('explore')).set('page', page);
     let url = '';
     let title = '';
     let menuItem: NativeValue = null;
@@ -722,6 +792,15 @@ export class NativeSourceRunner {
       url = NativeExpr.toText(await this.value(dynamic.target || '', scope.child().set('item', item)));
       menuItem = item;
     }
+    // 站点分页有固定上限（越界返回 404）时，到页就停，不再发请求；返回空列表宿主就认为到底了。
+    const maxPage = menu && menu.maxPage !== undefined ? menu.maxPage : explore.maxPage;
+    if (maxPage !== undefined && page > maxPage) {
+      if (this.host.trace) {
+        this.host.trace({ field: '发现请求', rule: `maxPage ${maxPage}`, type: 'limit', count: 0,
+          preview: `第 ${page} 页超过 maxPage，不再请求`, error: '' });
+      }
+      return [];
+    }
     if (!url) throw new NativeSourceError('发现分类没有可用的地址');
     const stage: NativeStageSpec = Object.assign({}, explore, {
       url: '= __url', headers: Object.assign({}, explore.headers || {}, menu && menu.headers ? menu.headers : {})
@@ -738,7 +817,7 @@ export class NativeSourceRunner {
 
   async detail(book: NativeBookInput): Promise<NativeBookRecord> {
     const stage = this.scripted(this.definition.detail || {}, BOOK_FIELD_NAMES);
-    const scope = (await this.baseScope()).set('book', book);
+    const scope = (await this.baseScope('detail')).set('book', book);
     this.scriptKeep = stage.script ? {} : null;
     let loaded: StagePage;
     let scriptKeep: Record<string, string> = {};
@@ -768,7 +847,7 @@ export class NativeSourceRunner {
     const defaultUrl = book.tocUrl || book.bookUrl;
     const nextStage: NativeStageSpec = Object.assign({}, stage, { url: '= __url' });
     const pageScope = async (page: number, url: string): Promise<NativeScope> =>
-      (await this.baseScope()).set('book', book).set('page', page).child().set('__url', url);
+      (await this.baseScope('toc')).set('book', book).set('page', page).child().set('__url', url);
     const pacer = new UiPacer();
     let nextUrl = '';
     for (let page = 1; page <= MAX_TOC_PAGES; page++) {
@@ -838,8 +917,14 @@ export class NativeSourceRunner {
         isVip: NativeExpr.isTruthy((await this.value(fields['isVip'], itemScope, false, 'toc.fields.isVip'))),
         isPay: NativeExpr.isTruthy((await this.value(fields['isPay'], itemScope, false, 'toc.fields.isPay'))),
         isVolume: isVolume,
-        tag: NativeExpr.toText((await this.value(fields['tag'] || fields['updateTime'], itemScope, false,
-          'toc.fields.tag'))).trim()
+        tag: fields['tag'] === undefined ? '' :
+          NativeExpr.toText((await this.value(fields['tag'], itemScope, false, 'toc.fields.tag'))).trim(),
+        updateTime: fields['updateTime'] === undefined ? '' :
+          NativeExpr.toText((await this.value(fields['updateTime'], itemScope, false, 'toc.fields.updateTime'))).trim(),
+        wordCount: fields['wordCount'] === undefined ? '' :
+          NativeExpr.toText((await this.value(fields['wordCount'], itemScope, false, 'toc.fields.wordCount'))).trim(),
+        type: fields['type'] === undefined ? '' :
+          NativeExpr.toText((await this.value(fields['type'], itemScope, false, 'toc.fields.type'))).trim().toLowerCase()
       });
       if (chapters.length >= MAX_LIST_ITEMS || (limit > 0 && chapters.length >= limit)) return true;
     }
@@ -862,6 +947,32 @@ export class NativeSourceRunner {
   /** 分页列表每批并发请求的页数：书源的 batch，没写或不合法时用默认值。 */
   private batchSize(batch: number | undefined): number {
     return Math.max(1, Math.min(Math.floor(Number(batch)) || DEFAULT_PAGE_BATCH, MAX_PAGE_BATCH));
+  }
+
+  /**
+   * 图文正文里的 <img> 改写成漫画图片同样的“地址,{选项}”写法，宿主下载这张图时就会套用 content.imageDecode
+   * 和 mediaHeaders。取地址的属性顺序与宿主一致（懒加载属性优先于 src）；已经带选项的、段评/点击控件
+   * （ident、onclick）和没有地址的标签保持原样。选项里的引号写成实体，宿主取地址前会先还原实体。
+   */
+  static attachInlineImageOptions(html: string, headers: Record<string, string>, decode: NativeImageDecode): string {
+    const names = ['data-original', 'data-src', 'data-url', 'data-lazy-src', 'data-echo', 'src', 'data-r-src'];
+    let index = 0;
+    return html.replace(/<img\b[^>]*>/gi, (tag: string): string => {
+      if (/\s(?:ident|onclick)\s*=/i.test(tag)) return tag;
+      let url = '';
+      for (const name of names) {
+        const match = new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i').exec(tag);
+        url = match ? (match[1] ?? match[2] ?? match[3] ?? '').trim() : '';
+        if (url) break;
+      }
+      if (!url || /^(?:javascript:|about:|#)/i.test(url) || /,\s*\{[\s\S]*\}$/.test(url)) return tag;
+      const options: Record<string, Object> = {};
+      if (Object.keys(headers).length > 0) options['headers'] = headers;
+      options['decode'] = decode;
+      options['imageIndex'] = index++;
+      const json = JSON.stringify(options).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+      return `<img src="${url.replace(/"/g, '&quot;')},${json}">`;
+    });
   }
 
   /** 把一页正文（文本或图片）追加到结果里，返回追加的字符数。 */
@@ -891,7 +1002,9 @@ export class NativeSourceRunner {
   async content(book: NativeBookInput, chapter: NativeChapterInput,
     allowVideoPage: boolean = false): Promise<NativeContentResult> {
     const stage = this.scriptedContent(this.requireStage(this.definition.content, '正文'));
-    const bookType = String(book.type || this.definition.type || 'text').toLowerCase();
+    // 图文书里的视频章（目录标了 type: video）按视频取，其余章节仍按书籍类型。
+    const chapterType = String(chapter.type || '').toLowerCase();
+    const bookType = chapterType === 'video' ? 'video' : String(book.type || this.definition.type || 'text').toLowerCase();
     const kind = bookType === 'video' && (stage.video || stage.videoPage) ? 'video' : (bookType === 'audio' && stage.audio ? 'audio' :
       ((bookType === 'comic' || bookType === 'image') && stage.images ? 'images' :
         (stage.text ? 'text' : (stage.images ? 'images' : (stage.audio ? 'audio' : 'video')))));
@@ -901,7 +1014,7 @@ export class NativeSourceRunner {
     });
     if (this.cancelled()) return empty('');
     const pageScope = async (page: number, url: string): Promise<NativeScope> =>
-      (await this.baseScope()).set('book', book).set('chapter', chapter).set('page', page).child().set('__url', url);
+      (await this.baseScope('content')).set('book', book).set('chapter', chapter).set('page', page).child().set('__url', url);
     const firstPage = await this.loadStage(stage, await pageScope(1, ''), chapter.url, '正文');
     const firstBase = firstPage.baseUrl;
     await this.runExtraFetches(stage.fetch, firstPage);
@@ -1003,7 +1116,9 @@ export class NativeSourceRunner {
       images: imageUrls, mediaHeaders: (await this.renderHeaders(stage.mediaHeaders, firstPage.scope)),
       imageDecode: null
     };
-    if (kind === 'images' && stage.imageDecode && firstPage) {
+    // 图文正文里的插图同样适用：只在正文确实带 <img> 时求值，免得没有图的章节因密钥规则取不到值而失败。
+    const inlineImages = kind === 'text' && /<img\b/i.test(text);
+    if ((kind === 'images' || inlineImages) && stage.imageDecode && firstPage) {
       const decode = stage.imageDecode;
       if (decode.script !== undefined) {
         const params = (await this.renderDeep(decode.params || {}, firstPage.scope)) as Record<string, NativeValue>;
@@ -1046,6 +1161,9 @@ export class NativeSourceRunner {
         };
         if (decode.ivPrefixBytes !== undefined) result.imageDecode.ivPrefixBytes = decode.ivPrefixBytes;
       }
+      if (inlineImages && result.imageDecode) {
+        result.text = NativeSourceRunner.attachInlineImageOptions(result.text, result.mediaHeaders, result.imageDecode);
+      }
     }
     if (kind === 'text' && firstPage) {
       const links = stage.links || [];
@@ -1083,17 +1201,24 @@ export class NativeSourceRunner {
     return result;
   }
 
-  /** hot 规则里某一行的热评：值是文字，或 { text, likes }。返回 [文字, 点赞数]。 */
-  private static hotEntry(hot: NativeValue, key: string): string[] {
-    if (!hot || typeof hot !== 'object') return ['', ''];
-    const value = (hot as Record<string, NativeValue>)[key];
-    if (typeof value === 'string' || typeof value === 'number') return [String(value), ''];
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return ['', ''];
+  /** hot 规则里某一行的热评：值是文字，或 { text, likes, emojis }。 */
+  private static hotEntry(hot: NativeValue, key: string): NativeHotEntry {
+    if (!hot || typeof hot !== 'object') return { text: '', likes: '', emojis: {} };
+    return NativeSourceRunner.hotValue((hot as Record<string, NativeValue>)[key]);
+  }
+
+  /** 一条热评的值：文字，或 { text, likes, emojis }（emojis 是 { 代号: 图片地址 } 或 [{ token, url }]）。 */
+  static hotValue(value: NativeValue): NativeHotEntry {
+    if (typeof value === 'string' || typeof value === 'number') return { text: String(value), likes: '', emojis: {} };
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return { text: '', likes: '', emojis: {} };
     const record = value as Record<string, NativeValue>;
-    const text = record['text'];
+    const text = typeof record['text'] === 'string' ? record['text'] as string : '';
     const likes = record['likes'];
-    return [typeof text === 'string' ? text : '',
-      typeof likes === 'string' || typeof likes === 'number' ? String(likes) : ''];
+    return {
+      text: text,
+      likes: typeof likes === 'string' || typeof likes === 'number' ? String(likes) : '',
+      emojis: ReaderActionMarker.normalizeEmojis(record['emojis'] as Object, [text])
+    };
   }
 
   /**
@@ -1123,10 +1248,16 @@ export class NativeSourceRunner {
       const response = await this.fetchValue(spec.request, paraScope);
       if (response === null || this.cancelled()) return;
       paraScope.set('res', response);
-      const text = NativeExpr.toText(await this.value(spec.text, paraScope)).trim();
+      // text 也可以直接给 { text, likes, emojis }。
+      const raw = await this.value(spec.text, paraScope);
+      const entry: NativeHotEntry = raw && typeof raw === 'object' && !Array.isArray(raw) ?
+        NativeSourceRunner.hotValue(raw) : { text: NativeExpr.toText(raw), likes: '', emojis: {} };
+      const text = entry.text.trim();
       if (!text) return;
-      const likes = spec.likes ? NativeExpr.toText(await this.value(spec.likes, paraScope)).trim() : '';
-      result[String(para.index)] = { text: text, likes: likes };
+      const likes = spec.likes ? NativeExpr.toText(await this.value(spec.likes, paraScope)).trim() : entry.likes;
+      const found: Record<string, NativeValue> = { text: text, likes: likes };
+      if (Object.keys(entry.emojis).length > 0) found['emojis'] = entry.emojis as Record<string, NativeValue>;
+      result[String(para.index)] = found;
     }).map((task: Promise<void>): Promise<void> => task.catch((): void => {}));
     if (work.length === 0) return result;
     let timer = -1;
@@ -1143,33 +1274,93 @@ export class NativeSourceRunner {
     return Object.assign({}, result);
   }
 
-  /** 本章说的热评：[文字, 点赞数]。任何失败、超时都返回空，不影响正文。 */
-  private async fetchChapterHot(spec: string | NativeChapterHotSpec, scope: NativeScope): Promise<string[]> {
-    try {
-      if (typeof spec === 'string') {
-        return NativeSourceRunner.hotEntry({ 'c': await this.value(spec, scope) }, 'c');
+  /** 评论条数的显示文字：纯数字（含 1.2万、999+）补“条评论”，其他文字原样。 */
+  static chapterCountText(value: NativeValue): string {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'number') return Number.isFinite(value) && value > 0 ? `${Math.floor(value)}条评论` : '';
+    const text = String(value).trim();
+    if (!text || /^0+$/.test(text)) return '';
+    return /^\d+(?:\.\d+)?[万wWkK千]?\+?$/.test(text) ? `${text}条评论` : text;
+  }
+
+  /**
+   * chapterHot 的结果：文字、{ text, likes, user, emojis }、它们的列表，或 { count, items, emojis }。
+   * 规则里单独写的 likes / user 只补给“结果只是一条文字”的情况。
+   */
+  static chapterHotValue(value: NativeValue, likes: string = '', user: string = ''): NativeChapterHot {
+    const found: NativeChapterHot = { hots: [], count: '', emojis: {} };
+    const rawEmojis: NativeValue[] = [];
+    const one = (entry: NativeValue): void => {
+      const hot = new ReaderActionHot();
+      if (typeof entry === 'string' || typeof entry === 'number') {
+        hot.text = String(entry);
+      } else if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        const record = entry as Record<string, NativeValue>;
+        hot.text = typeof record['text'] === 'string' ? record['text'] as string : '';
+        const entryLikes = record['likes'];
+        hot.likes = typeof entryLikes === 'string' || typeof entryLikes === 'number' ? String(entryLikes) : '';
+        hot.user = typeof record['user'] === 'string' ? record['user'] as string : '';
+        if (record['emojis']) rawEmojis.push(record['emojis']);
       }
-      if (spec.when && !NativeExpr.isTruthy(await this.value(spec.when, scope))) return ['', ''];
-      const work = (async (): Promise<string[]> => {
+      found.hots.push(hot);
+    };
+    if (Array.isArray(value)) {
+      (value as NativeValue[]).slice(0, ReaderActionMarker.MAX_HOT_ITEMS * 2).forEach(one);
+    } else if (value && typeof value === 'object' && Array.isArray((value as Record<string, NativeValue>)['items'])) {
+      const record = value as Record<string, NativeValue>;
+      (record['items'] as NativeValue[]).slice(0, ReaderActionMarker.MAX_HOT_ITEMS * 2).forEach(one);
+      found.count = NativeSourceRunner.chapterCountText(record['count']);
+      if (record['emojis']) rawEmojis.push(record['emojis']);
+    } else {
+      one(value);
+      if (typeof value === 'string' || typeof value === 'number') {
+        found.hots[0].likes = likes;
+        found.hots[0].user = user;
+      }
+    }
+    found.hots = ReaderActionMarker.normalizeHots(found.hots);
+    const texts = found.hots.map((hot: ReaderActionHot): string => hot.text);
+    for (const raw of rawEmojis) {
+      const map = ReaderActionMarker.normalizeEmojis(raw as Object, texts);
+      for (const token of Object.keys(map)) {
+        if (found.emojis[token] === undefined) found.emojis[token] = map[token];
+      }
+    }
+    return found;
+  }
+
+  /** 本章说的热评与评论条数。任何失败、超时都返回空，不影响正文。 */
+  private async fetchChapterHot(spec: string | NativeChapterHotSpec, scope: NativeScope): Promise<NativeChapterHot> {
+    const empty: NativeChapterHot = { hots: [], count: '', emojis: {} };
+    try {
+      if (typeof spec === 'string') return NativeSourceRunner.chapterHotValue(await this.value(spec, scope));
+      if (spec.when && !NativeExpr.isTruthy(await this.value(spec.when, scope))) return empty;
+      const work = (async (): Promise<NativeChapterHot> => {
         const hotScope = scope.child();
         const response = await this.fetchValue(spec.request, hotScope);
-        if (response === null || this.cancelled()) return ['', ''];
+        if (response === null || this.cancelled()) return empty;
         hotScope.set('res', response);
-        const text = NativeExpr.toText(await this.value(spec.text, hotScope)).trim();
-        if (!text) return ['', ''];
-        return [text, spec.likes ? NativeExpr.toText(await this.value(spec.likes, hotScope)).trim() : ''];
+        const raw = await this.value(spec.text, hotScope);
+        const likes = spec.likes ? NativeExpr.toText(await this.value(spec.likes, hotScope)).trim() : '';
+        const user = spec.user ? NativeExpr.toText(await this.value(spec.user, hotScope)).trim() : '';
+        const found = NativeSourceRunner.chapterHotValue(raw, likes, user);
+        if (spec.count) {
+          const count = NativeSourceRunner.chapterCountText(await this.value(spec.count, hotScope));
+          if (count) found.count = count;
+        }
+        return found;
       })();
       let timer = -1;
       const found = await Promise.race([
         work,
-        new Promise<string[]>((resolve): void => {
-          timer = setTimeout((): void => resolve(['', '']), NativeSourceRunner.HOT_COMMENT_WAIT_MS);
+        new Promise<NativeChapterHot>((resolve): void => {
+          timer = setTimeout((): void => resolve(empty), NativeSourceRunner.HOT_COMMENT_WAIT_MS);
         })
       ]);
       if (timer >= 0) clearTimeout(timer);
       return found;
     } catch (_) {
-      return ['', ''];
+      return empty;
     }
   }
 
@@ -1179,8 +1370,9 @@ export class NativeSourceRunner {
     const scope = page.scope.child();
     scope.set('stats', spec.stats ? await this.fetchValue(spec.stats, scope) : null);
     // 本章说热评与段落热评同时请求。
-    const chapterHotTask: Promise<string[]> = spec.chapterHot ? this.fetchChapterHot(spec.chapterHot, scope) :
-      Promise.resolve(['', '']);
+    const noChapterHot: NativeChapterHot = { hots: [], count: '', emojis: {} };
+    const chapterHotTask: Promise<NativeChapterHot> = spec.chapterHot ?
+      this.fetchChapterHot(spec.chapterHot, scope) : Promise.resolve(noChapterHot);
     const inline = !!(spec.page || spec.chapterPage);
     const contextKey = inline ? this.inlineKey(book, chapter) : '';
     const context: InlineContext = { sourceUrl: this.definition.url, savedAt: Date.now(), values: '', paragraphs: [], total: 0,
@@ -1222,9 +1414,10 @@ export class NativeSourceRunner {
         if (url) {
           const comment: NativeParagraphComment = { line: line, count: count, url: url };
           const hotEntry = NativeSourceRunner.hotEntry(hot, key);
-          if (hotEntry[0]) {
-            comment.preview = hotEntry[0];
-            if (hotEntry[1]) comment.likes = hotEntry[1];
+          if (hotEntry.text) {
+            comment.preview = hotEntry.text;
+            if (hotEntry.likes) comment.likes = hotEntry.likes;
+            if (Object.keys(hotEntry.emojis).length > 0) comment.emojis = hotEntry.emojis;
           }
           result.paragraphComments.push(comment);
         }
@@ -1252,10 +1445,13 @@ export class NativeSourceRunner {
       NativeSourceRunner.inlineContexts.set(contextKey, context);
     }
     const chapterHot = await chapterHotTask;
-    if (result.chapterCommentUrl && chapterHot[0]) {
-      result.chapterCommentPreview = chapterHot[0];
-      if (chapterHot[1]) result.chapterCommentLikes = chapterHot[1];
+    if (result.chapterCommentUrl && chapterHot.hots.length > 0) {
+      result.chapterCommentPreview = chapterHot.hots[0].text;
+      if (chapterHot.hots[0].likes) result.chapterCommentLikes = chapterHot.hots[0].likes;
+      result.chapterCommentHots = chapterHot.hots;
+      if (Object.keys(chapterHot.emojis).length > 0) result.chapterCommentEmojis = chapterHot.emojis;
     }
+    if (result.chapterCommentUrl && chapterHot.count) result.chapterCommentCount = chapterHot.count;
   }
 
   private inlineKey(book: NativeBookInput, chapter: NativeChapterInput): string {
@@ -1462,7 +1658,22 @@ export class NativeSourceRunner {
     return this.host.userAgent ? this.host.userAgent() : '';
   }
 
-  private async baseScope(): Promise<NativeScope> {
+  /**
+   * 阶段写了自己的 rate 时返回它（按阶段单独排队），否则为 null，请求沿用顶层 rate。
+   * 发现分类（dynamicMenus）属于发现阶段；登录、按钮、cache 等不属于任何阶段，总是用顶层。
+   */
+  private stageRate(stageName: string): BookSourceStageRate | null {
+    const stage = stageName === 'menus' ? 'explore' : stageName;
+    if (RATE_STAGES.indexOf(stage) < 0) return null;
+    const spec = (this.definition as NativeValue as Record<string, NativeValue>)[stage];
+    if (!spec || typeof spec !== 'object' || Array.isArray(spec)) return null;
+    const rate = (spec as Record<string, NativeValue>)['rate'];
+    if (rate === undefined || rate === null) return null;
+    return { stage: stage, rate: String(rate).trim() };
+  }
+
+  /** stage 是 search / explore / detail / toc / content 时记进作用域，这个阶段里建的请求按它的 rate 排队。 */
+  private async baseScope(stage: string = ''): Promise<NativeScope> {
     const scope = new NativeScope()
       .set('vars', this.varValues)
       .set('source', { url: this.definition.url, name: this.definition.name })
@@ -1479,7 +1690,9 @@ export class NativeSourceRunner {
       .set('form', {});
     await this.applyCaches(scope);
     (await this.applyLets(this.definition.let, scope));
-    return scope.child();
+    const child = scope.child();
+    if (stage) child.set(STAGE_SCOPE_KEY, stage);
+    return child;
   }
 
   private async applyLets(lets: Record<string, NativeValue> | undefined, scope: NativeScope): Promise<void> {
@@ -1541,7 +1754,7 @@ export class NativeSourceRunner {
    */
   private async runScriptFunction(fn: string, ctx: Record<string, NativeValue>, stageName: string, scope: NativeScope,
     interactive: boolean, keep: Record<string, string> | null,
-    emit: ((value: NativeValue) => Promise<void>) | null = null): Promise<ScriptRun> {
+    emit: ((value: NativeValue) => Promise<void>) | null = null, background: boolean = false): Promise<ScriptRun> {
     const limits = NativeScriptLimits.of(this.definition.scriptLimits ? this.definition.scriptLimits.requests : undefined);
     const scriptHost = new NativeScriptHost({
       host: this.host,
@@ -1559,7 +1772,10 @@ export class NativeSourceRunner {
       keep: keep,
       emit: emit ?? undefined,
       interactive: interactive,
-      requestHeaders: (own: Record<string, string>): Promise<Record<string, string>> => this.requestHeaders(own, scope)
+      background: background,
+      requestHeaders: (own: Record<string, string>): Promise<Record<string, string>> => this.requestHeaders(own, scope),
+      charset: String(this.definition.charset || '').trim(),
+      stageRate: this.stageRate(stageName) ?? undefined
     });
     const startedAt = Date.now();
     try {
@@ -1582,10 +1798,12 @@ export class NativeSourceRunner {
     const fn = String(stage.script || '').trim();
     const stageName = STAGE_NAMES[label] || label;
     const interactive = stageName === 'detail' || stageName === 'toc' || stageName === 'content';
+    // 设置页按钮、登录脚本总是用户点出来的，不受这里限制；阶段脚本还要看这次是不是后台调用。
+    const background = interactive && !!this.host.canInteract && !this.host.canInteract();
     let run: ScriptRun;
     try {
       run = await this.runScriptFunction(fn, this.scriptContext(scope, stageName), stageName, scope, interactive,
-        stageName === 'detail' ? this.scriptKeep : null, emit);
+        stageName === 'detail' ? this.scriptKeep : null, emit, background);
     } catch (e) {
       throw new NativeSourceError(`${label}脚本 ${fn}：${(e as Error).message}`);
     }
@@ -1764,15 +1982,18 @@ export class NativeSourceRunner {
     const method = (rendered || (body ? 'POST' : 'GET')).toUpperCase();
     if (!/^[A-Z]+$/.test(method)) throw new NativeSourceError(`请求方法无效：${rendered}`);
     const web = spec.webView && typeof spec.webView === 'object' ? spec.webView : null;
-    return {
+    const stageRate = this.stageRate(scope.has(STAGE_SCOPE_KEY) ? NativeExpr.toText(scope.get(STAGE_SCOPE_KEY)) : '');
+    const request: NativeRequest = {
       url: url, method: method, headers: await this.requestHeaders(headers, scope, lenientSourceHeaders), body: body,
       webView: spec.webView === true || !!web,
       webWaitFor: web && web.waitFor ? String(web.waitFor).trim() : '',
       webTimeout: Math.max(3, Math.min(Number(web && web.timeout) || 15, 60)),
-      charset: String(spec.charset || '').trim(),
+      charset: String(spec.charset || this.definition.charset || '').trim(),
       retry: HttpRetryPolicy.parse(spec.retry),
       primary: primary
     };
+    if (stageRate) request.stageRate = stageRate;
+    return request;
   }
 
   private async renderDeep(value: NativeValue, scope: NativeScope): Promise<NativeValue> {
@@ -1919,6 +2140,7 @@ export class NativeSourceRunner {
       bookUrl: (await url('bookUrl')),
       tocUrl: (await url('tocUrl')),
       type: (literalType ? String(typeSpec).trim() : (await text('type'))).toLowerCase(),
+      site: fields['site'] === undefined ? '' : (await text('site')),
       keep: {}
     };
   }

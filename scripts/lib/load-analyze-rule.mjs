@@ -107,14 +107,18 @@ function rewrite(text, rel, queue) {
     });
 }
 
-/** 暂存并加载 AnalyzeRule 及其依赖，返回 { AnalyzeRule, RuleExecutionTarget, ..., cleanup }。 */
-export async function loadAnalyzeRule() {
+/**
+ * 暂存并加载 AnalyzeRule 及其依赖，返回 { AnalyzeRule, RuleExecutionTarget, ..., load, cleanup }。
+ * load(rel) 按源码根相对路径导入已暂存的其他模块（例如 'core/rule/JsRuntime.ts'）。
+ * extraEntries 里的模块连同依赖一并暂存（例如 'core/rule/RuleExecutionService.ts'），之后同样用 load 导入。
+ */
+export async function loadAnalyzeRule(extraEntries = []) {
   const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'analyze-rule-check-'));
   const cleanup = () => fs.rmSync(stagingDir, { recursive: true, force: true });
   try {
     fs.writeFileSync(path.join(stagingDir, STUB_FILE), STUB_SOURCE);
     const entry = relativeToRoot(locateEtsModule('core/rule/AnalyzeRule.ts'));
-    const queue = [entry, 'core/rule/RuleValue.ts'];
+    const queue = [entry, 'core/rule/RuleValue.ts', ...extraEntries];
     const seen = new Set();
     while (queue.length > 0) {
       const rel = queue.shift();
@@ -125,7 +129,7 @@ export async function loadAnalyzeRule() {
       fs.writeFileSync(target, rewrite(fs.readFileSync(locateEtsModule(rel), 'utf8'), rel, queue));
     }
     const load = (rel) => import(pathToFileURL(path.join(stagingDir, rel)).href);
-    return { ...(await load(entry)), ...(await load('core/rule/RuleValue.ts')), stagedFiles: seen.size, cleanup };
+    return { ...(await load(entry)), ...(await load('core/rule/RuleValue.ts')), stagedFiles: seen.size, load, cleanup };
   } catch (error) {
     cleanup();
     throw error;

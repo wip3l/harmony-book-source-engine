@@ -139,6 +139,22 @@ try {
   assertions++;
   if (Date.now() - cappedAt > 1000) throw new Error('等待上限没有生效');
 
+  // 原生书源阶段自己的 rate：按“书源 + 阶段”单独排队，不占顶层窗口；写 0 的阶段不限流。
+  const staged = { concurrentRate: '1/60000', bookSourceUrl: 'https://staged.example', bookSourceName: '' };
+  const tocRate = { stage: 'toc', rate: '1/60000' };
+  equal(await BookSourceRateLimiter.acquire(staged), 0, '顶层窗口第一个请求放行');
+  equal(await BookSourceRateLimiter.acquire(staged, undefined, 80, tocRate), 0, '阶段窗口不被顶层占满');
+  equal(await BookSourceRateLimiter.acquire(staged, undefined, 80, tocRate), 2, '阶段窗口自己满了照样排队');
+  equal(await BookSourceRateLimiter.acquire(staged, undefined, 80, { stage: 'content', rate: '1/60000' }), 0,
+    '不同阶段各自排队');
+  for (let i = 0; i < 3; i++) {
+    equal(await BookSourceRateLimiter.acquire(staged, undefined, 80, { stage: 'search', rate: '0' }), 0, '写 0 的阶段不限流');
+  }
+  equal(await BookSourceRateLimiter.acquire(staged, undefined, 80), 2, '顶层窗口没有被阶段请求释放或占用');
+  const freeTop = { concurrentRate: '', bookSourceUrl: 'https://free-top.example', bookSourceName: '' };
+  equal(await BookSourceRateLimiter.acquire(freeTop, undefined, 80, tocRate), 0, '顶层不限流时阶段 rate 照样生效（第一个）');
+  equal(await BookSourceRateLimiter.acquire(freeTop, undefined, 80, tocRate), 2, '顶层不限流时阶段 rate 照样生效（排队）');
+
   // 宿主调度器：额度空出来时只放行优先级最高的等待者，窗口仍由限流器控制。
   const queue = [];
   hostStub.scheduler = {
