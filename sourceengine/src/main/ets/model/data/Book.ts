@@ -556,4 +556,9 @@ export class HttpTTS {
   customOrder: number = 0;
   lastUpdateTime: number = 0;
   enabled: boolean = true;
+  /**
+   * 倍速由谁来做：'engine' 表示接口已按 URL 里的倍速变量合成，播放时不再变速；'client' 表示接口只出
+   * 原速音频，由播放器变速（不变调）。留空时看 URL 是否用了倍速变量。
+   */
+  speedMode: string = '';
 }
