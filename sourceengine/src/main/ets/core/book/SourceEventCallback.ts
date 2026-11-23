@@ -44,6 +44,19 @@ export class SourceEventCallback {
   }
 
   /**
+   * 自定义按钮该叫什么。书源格式里按钮只有开关、没有名字，这里按回调脚本处理点击的那一段来猜：
+   * 提到评论（地址或字样）就是“评论”。猜不出来返回空串，由宿主用自己的默认叫法。
+   */
+  static customButtonLabel(source: BookSource | null | undefined): string {
+    if (!SourceEventCallback.hasCustomButton(source)) return '';
+    const script = source!.contentRule.callBackJs || '';
+    const at = script.indexOf(SourceEventCallback.CLICK_CUSTOM_BUTTON);
+    // 只看处理点击的部分，免得别的事件分支里的字样带偏。
+    const handler = at >= 0 ? script.substring(at) : script;
+    return /comment|review|评论|书评|章评|段评|本章说/i.test(handler) ? '评论' : '';
+  }
+
+  /**
    * 执行一次事件回调。不抛异常：环境没就绪、脚本报错都写进结果的 error。
    * chapter 传当前章节；不在阅读页时传 null，脚本里的 `chapter.url` 为空。
    */
