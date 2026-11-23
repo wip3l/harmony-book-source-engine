@@ -3649,6 +3649,18 @@ https://img.example/page.jpg,{"headers":{"Referer":"https://example.com/"}}
 
 不要把账号、密码、长期 Token 直接提交到公共书源 JSON。优先通过登录页获取短期 Cookie，或仅在本机编辑 `loginHeader`。
 
+### 自定义朗读音色的倍速 `speedMode`
+
+自定义在线音色（与原版兼容的 `HttpTTS` JSON）可用 `speedMode` 声明倍速由谁处理：
+
+| 取值 | 含义 |
+| --- | --- |
+| `engine` | 接口按 URL 里的倍速变量合成音频，播放器保持 1 倍 |
+| `client` | 接口只出原速音频，由播放器变速（不变调），朗读中调倍速立即生效，不同倍速共用同一份缓存 |
+| 留空 | URL 用了倍速变量（如 `speakSpeed`）按 `engine`，没用按 `client` |
+
+接口本身不支持变速、或变速后音质明显变差时，去掉 URL 里的倍速变量或写 `client`；接口变速效果更好时写 `engine`。
+
 ## 开发与验证
 
 ### 先确认接口
