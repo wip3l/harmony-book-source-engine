@@ -184,6 +184,67 @@ try {
     }
   }
 
+  // 切整元素：结束标签省略、同名嵌套、自闭合、大小写混用时，结果与“从开始标签往后数深度”一致；
+  // 大页面里几千个不闭合的项不能每项都扫到文末（曾在目录页卡死主线程）。
+  const sliceByDepth = (html, start, startTag, tag) => {
+    const re = new RegExp(`<\\/?${tag}(?:\\s[^>]*)?>`, 'gi');
+    re.lastIndex = start + startTag.length;
+    let depth = 1;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      if (m[0].startsWith('</')) depth--;
+      else if (!m[0].endsWith('/>')) depth++;
+      if (depth === 0) return html.substring(start, re.lastIndex);
+    }
+    return startTag;
+  };
+  const expectByDepth = (html, className) => {
+    const out = [];
+    const re = /<([a-zA-Z][a-zA-Z0-9_-]*)(\s[^>]*)?>/gi;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      if (!new RegExp(`class=["']?[^"'>]*\\b${className}\\b`, 'i').test(m[2] || '')) continue;
+      out.push(['br', 'img', 'hr', 'input', 'meta', 'link'].includes(m[1].toLowerCase()) ? m[0] : sliceByDepth(html, m.index, m[0], m[1]));
+    }
+    return out;
+  };
+  const tricky = [
+    '<ul><li class="ch"><a href="/1">一</a><li class="ch"><a href="/2">二</a><li class="ch">三</ul>',
+    '<ul><li class="ch">一<li class="ch">二</li><li class="ch">三</li></ul><li class="ch">四',
+    '<div class="ch">外<div class="ch">中<div class="ch">内</div></div><div class="ch">旁</div></div><div class="ch">尾',
+    '<DIV class="ch">大写<div class="ch">小写</DIV></div><Li class="ch">x</LI><li class="ch"/>y</li>',
+    `${'<p class="ch">段'.repeat(12)}${'</p>'.repeat(5)}<span class="ch">s<span class="ch">t</span>`,
+    `<dl>${Array.from({ length: 20 }, (_, i) => `<dd class="ch"><a href="/c/${i}">第${i}章</a>${i % 3 ? '</dd>' : ''}`).join('')}</dl>`,
+  ];
+  for (const html of tricky) {
+    const expected = expectByDepth(html, 'ch');
+    for (const rule of ['class.ch', '.ch']) {
+      assertions++;
+      const actual = new AnalyzeRule(html, BASE_URL).execute(rule, RuleExecutionTarget.ELEMENTS).map((v) => v.asString());
+      if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+        throw new Error(`切整元素与数深度不一致：${rule} @ ${html.slice(0, 60)}\n  expected: ${JSON.stringify(expected)}\n  actual:   ${JSON.stringify(actual)}`);
+      }
+    }
+  }
+  const pad = '这是一个比较长的章节标题'.repeat(8);
+  const bigCatalog = (closed) => `<html><body><ul class="list">${Array.from({ length: 6000 },
+    (_, i) => `<li class="ch"><a href="/book/123/${i}.html">第${i + 1}章 ${pad}</a>${closed ? '</li>' : ''}`).join('\n')}</ul></body></html>`;
+  const timeList = (html) => {
+    const startedAt = performance.now();
+    const count = new AnalyzeRule(html, BASE_URL).execute('class.ch', RuleExecutionTarget.ELEMENTS).length;
+    return { count, ms: performance.now() - startedAt };
+  };
+  const closedList = timeList(bigCatalog(true));
+  const openList = timeList(bigCatalog(false));
+  assertions++;
+  if (closedList.count !== 6000 || openList.count !== 6000) {
+    throw new Error(`大目录项数不对：闭合 ${closedList.count}，不闭合 ${openList.count}`);
+  }
+  assertions++;
+  if (openList.ms > closedList.ms * 10 + 100) {
+    throw new Error(`不闭合的大目录切元素太慢：${openList.ms.toFixed(0)} ms（闭合 ${closedList.ms.toFixed(0)} ms）`);
+  }
+
   // HTML 目录取字段耗时（参考值，不做断言）。
   const timings = [];
   for (const count of [1000, 8000]) {
