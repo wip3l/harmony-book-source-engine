@@ -1118,6 +1118,15 @@ try {
   const fallbackResult = await fallbackRunner().content({ ...book, type: 'video' }, videoChapter, true);
   equal(fallbackResult.videoPage, 'https://api.example.com/watch/c1', '网页地址按响应地址补全');
   equal(fallbackResult.mediaHeaders, { Referer: 'https://example.com/' }, '视频专用结果保留媒体头');
+  equal(fallbackResult.playlist, undefined, '没写 content.playlist 时不接管播放列表');
+  fallbackDefinition.content.playlist = {};
+  equal((await fallbackRunner().content({ ...book, type: 'video' }, videoChapter, true)).playlist,
+    { lowLatency: true }, 'content.playlist 默认保留低延迟');
+  fallbackDefinition.content.playlist = { lowLatency: false };
+  equal((await fallbackRunner().content({ ...book, type: 'video' }, videoChapter, true)).playlist,
+    { lowLatency: false }, 'content.playlist.lowLatency 透传');
+  equal(NativeSourceSpec.validate(NativeSourceSpec.fromObject(fallbackDefinition)), [], 'playlist 写法通过校验');
+  delete fallbackDefinition.content.playlist;
   fallbackDefinition.content.videoPage = '= missingName';
   equal((await fallbackRunner().content({ ...book, type: 'video' }, videoChapter, true)).text, played.text,
     '可选网页规则错误不阻断有效直链');
@@ -1144,6 +1153,9 @@ try {
   equal(brokenDirect.videoPage, 'https://api.example.com/watch/1', '直链规则抛错仍保留有效网页');
   equal(!!brokenDirect.mediaError, true, '直链规则抛错保留原因');
   invalid((s) => { s.content.videoPage = { url: '/watch' }; }, '网页规则必须为字符串');
+  invalid((s) => { s.content.playlist = true; }, 'playlist 必须是对象');
+  invalid((s) => { s.content.playlist = { lowLatency: 'no' }; }, 'playlist.lowLatency 必须是布尔值');
+  invalid((s) => { s.content.playlist = { script: 'rewrite' }; }, 'playlist 暂不支持脚本');
   invalid((s) => { s.type = 'movie'; }, '不认识的类型');
 
   // ---------- 分卷 ----------
