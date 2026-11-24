@@ -268,6 +268,12 @@ export interface NativeContentResult {
   /** 取图片、音频时附带的请求头。 */
   mediaHeaders: Record<string, string>;
   imageDecode: NativeImageDecode | null;
+  /** 视频书源写了 content.playlist 时由应用接管播放列表请求；没写时不出现。 */
+  playlist?: NativeVideoPlaylist;
+}
+
+export interface NativeVideoPlaylist {
+  lowLatency: boolean;
 }
 
 export interface NativeContentLink {
@@ -1045,12 +1051,14 @@ export class NativeSourceRunner {
         mediaError = mediaError || (await this.mediaFailure(stage, firstPage, kind));
         if (!videoPage) throw new NativeSourceError(mediaError);
       }
-      return {
+      const media: NativeContentResult = {
         kind: kind, text: audio ? NativeExpr.resolveUrl(audio, firstPage.baseUrl) : '', baseUrl: firstPage.baseUrl,
         videoPage: videoPage, mediaError: mediaError,
         paragraphComments: [], chapterCommentUrl: '', links: [], images: [],
         mediaHeaders: (await this.renderHeaders(stage.mediaHeaders, firstPage.scope)), imageDecode: null
       };
+      if (kind === 'video' && stage.playlist) media.playlist = { lowLatency: stage.playlist.lowLatency !== false };
+      return media;
     }
     const parts: string[] = [];
     const imageUrls: string[] = [];

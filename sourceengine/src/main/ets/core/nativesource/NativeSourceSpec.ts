@@ -285,6 +285,14 @@ export interface NativeImageDecodeSpec {
   ivPrefixBytes?: number;
 }
 
+/**
+ * 视频 HLS 播放列表交给应用接管：播放列表（含直播反复刷新的 m3u8）由应用取回、补全地址后再交给播放器，
+ * 分片仍由播放器直接下载。lowLatency 为 false 时去掉 LL-HLS 的分片预告，按普通 HLS 播放。
+ */
+export interface NativeVideoPlaylistSpec {
+  lowLatency?: boolean;
+}
+
 export interface NativeContentSpec extends NativeStageSpec {
   comments?: NativeCommentsSpec;
   links?: NativeLinkSpec[];
@@ -300,6 +308,8 @@ export interface NativeContentSpec extends NativeStageSpec {
   mediaError?: string;
   /** 取图片、音频时附带的请求头，例如 Referer。 */
   mediaHeaders?: Record<string, string>;
+  /** 视频的 HLS 播放列表由应用接管请求，见 NativeVideoPlaylistSpec。 */
+  playlist?: NativeVideoPlaylistSpec;
   /** 正文分页地址：一个地址是下一页，列表或多行文本是本章剩余全部分页。 */
   nextUrl?: string;
   /** nextUrl 列出剩余全部分页时，每批并发请求的页数，1 到 16，默认 4。 */
@@ -746,6 +756,19 @@ export class NativeSourceSpec {
       }
       if (!content.text && !content.images && !content.audio && !content.video && !content.videoPage && !content.script) {
         errors.push('content 需要 text、images、audio、video、videoPage 或 script 之一');
+      }
+      if (content.playlist !== undefined) {
+        const playlist = content.playlist as NativeValue;
+        if (!playlist || typeof playlist !== 'object' || Array.isArray(playlist)) {
+          errors.push('content.playlist 必须是对象');
+        } else {
+          const record = playlist as Record<string, NativeValue>;
+          if (record['lowLatency'] !== undefined && typeof record['lowLatency'] !== 'boolean') {
+            errors.push('content.playlist.lowLatency 必须是 true 或 false');
+          }
+          const unknown = Object.keys(record).filter((key: string): boolean => key !== 'lowLatency');
+          if (unknown.length > 0) errors.push(`content.playlist 不支持字段：${unknown.join('、')}`);
+        }
       }
       if (content.replace !== undefined && !Array.isArray(content.replace)) errors.push('content.replace 必须是数组');
       NativeSourceSpec.checkBatch(content.batch, 'content.batch', errors);
