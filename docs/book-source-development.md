@@ -3234,6 +3234,7 @@ QuickJS 不能直接替代 JSONPath/CSS/XPath：选择器需要解析 HTML/JSON 
 - `java.toast` / `java.longToast`：详情、目录、正文阶段弹出的提示交给宿主显示（宿主通过 `SourceScriptNotice.setHandler` 接收，参考宿主显示为应用内提示），同一书源的同一条提示 15 秒内只转发一次；搜索、发现和登录界面有各自的提示方式，不经过这里；
 - `java.randomUUID()`、`java.androidId()`；
 - `java.put/get`、`source.get/put/getVariable/setVariable`、`source.key`（与 Android 端 `source.key` 属性一致，取书源地址）、`book.getVariable/putVariable`；轻量引擎处理完 `java.*` 调用后，剩余的字符串链、三元和正则字面量表达式会交给 QuickJS 兜底求值，修复字面 `\n` 被展开、时间戳显示为 1970 之类的问题；
+- `java.put` 的值按作用范围分开存：列表规则（搜索、发现）里的完整脚本调用时记在当前这条结果上，并随结果进入书籍变量；有书时记在书上；只有两者都没有时才写书源全局那份。`java.get` 依次读当前结果、书、书源全局。所以在列表规则里 `java.put("bid", …)`、到 `tocUrl` 或正文里再 `java.get("bid")`，取到的是这本书自己的值，不会被最后一条搜索结果覆盖；
 - `baseUrl` 会随当前规则解析地址注入；分阶段 ArkWeb 还提供带 `get/put/save` 的临时 `infoMap`；
 - `source.getLoginInfo/getLoginInfoMap/putLoginInfo`、`source.getLoginHeader` 和 `cache.get/put/delete`；
 - `android.util.Base64`、`java.util.Base64`、`URLEncoder/URLDecoder`、`System.currentTimeMillis` 等常见 Java/Android 别名；
