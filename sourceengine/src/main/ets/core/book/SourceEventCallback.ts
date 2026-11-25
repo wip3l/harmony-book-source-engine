@@ -31,11 +31,21 @@ export class SourceEventCallback {
   static readonly DEL_BOOK_SHELF: string = 'delBookShelf';
   /** 用户点了书源的自定义按钮（`customButton: true` 时宿主才显示）。 */
   static readonly CLICK_CUSTOM_BUTTON: string = 'clickCustomButton';
+  /** 用户在详情页点了作者名，想看书源提供的作者主页（宿主先用 handles 确认书源处理它，再给入口）。 */
+  static readonly CLICK_AUTHOR: string = 'clickAuthor';
 
   /** 书源声明了事件回调并且写了脚本。 */
   static listens(source: BookSource | null | undefined): boolean {
     if (!source || NativeSourceService.isNative(source)) return false;
     return source.eventListener === true && !!(source.contentRule?.callBackJs || '').trim();
+  }
+
+  /**
+   * 书源的回调脚本里提到了这个事件。没有声明事件清单的字段，只能看脚本里有没有这个事件名；
+   * 宿主据此决定要不要给可选事件（比如作者主页）留入口。
+   */
+  static handles(source: BookSource | null | undefined, event: string): boolean {
+    return !!event && SourceEventCallback.listens(source) && source!.contentRule.callBackJs.includes(event);
   }
 
   /** 书源要求显示自定义按钮，并且点了有脚本可跑。 */
