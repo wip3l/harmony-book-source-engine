@@ -1538,7 +1538,6 @@ export class NativeSourceRunner {
       result.dataJson = JSON.stringify(await this.renderDeep(spec.data || {}, scope));
       if (NativeCommentPage.bytes(result.dataJson) > NativeCommentPage.MAX_DATA) throw new Error('内联页面 data 超过 64 KiB');
       result.title = NativeExpr.toText(await this.template(spec.title || '评论', scope)).substring(0, 192) || '评论';
-      result.height = spec.height === undefined ? 0.8 : spec.height;
       if (this.cancelled()) throw new Error('已取消');
       if (this.host.trace) this.host.trace({ field: 'content.comments.page', rule: spec.html, type: 'inline-page',
         count: 1, preview: `HTML ${NativeCommentPage.bytes(result.html)} bytes / data ${NativeCommentPage.bytes(result.dataJson)} bytes`, error: '' });

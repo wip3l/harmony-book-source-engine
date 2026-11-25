@@ -29,11 +29,16 @@ const runner = (def = definition, vars = {}) => new Runner(def, host, vars);
 try {
   assert.deepEqual(Spec.validate(definition), []);
   assert.deepEqual(Spec.unpack(Spec.pack(Spec.fromObject(Spec.toExportObject(definition)))),definition);
-  for (const invalid of [{ html: '' }, { html: '<p/>', height: 0.1 }, { html: '<p/>', data: [] },
+  for (const invalid of [{ html: '' }, { html: '<p/>', data: [] },
     { html: '<p/>', fetch: { para: { url: '/x' } } }, { html: '<p/>', fetch: { x: {} } },
     { html: '<p/>', fetch: Object.fromEntries([1,2,3,4].map(n => ['r' + n, {url:'/x'}])) }]) {
     const def = structuredClone(definition); def.content.comments.page = invalid;
     assert(Spec.validate(def).length > 0, JSON.stringify(invalid));
+  }
+  // height 已停用：任何取值都不报错，生成的页面也不带高度。
+  for (const height of [0.1, 5, 'tall']) {
+    const def = structuredClone(definition); def.content.comments.page.height = height;
+    assert.deepEqual(Spec.validate(def), [], `ignored page.height ${JSON.stringify(height)}`);
   }
   const only = structuredClone(definition);
   delete only.content.comments.paragraphUrl; delete only.content.comments.chapterUrl;
@@ -47,7 +52,7 @@ try {
   const page = await runner().commentPage(book, chapter, action);
   assert.equal(host.requests.length, 3, 'warm click reuses bounded context and only requests chosen paragraph');
   assert.equal(host.requests[2].url, 'https://example.com/comments/1');
-  assert.equal(page.html, '<p>第二段</p>'); assert.equal(page.title, '第 2 段'); assert.equal(page.height, 0.7);
+  assert.equal(page.html, '<p>第二段</p>'); assert.equal(page.title, '第 2 段'); assert.equal(page.height, undefined);
   assert.deepEqual(JSON.parse(page.dataJson), { index: 1, count: 3, list: ['hello', '</script><script>evil()</script>'] });
   const chapterPage = await runner().commentPage(book, chapter, content.chapterCommentUrl);
   assert.equal(chapterPage.html, '<p>本章 5</p>'); assert.equal(JSON.parse(chapterPage.dataJson).total, 5);

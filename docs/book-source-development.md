@@ -1340,7 +1340,6 @@ blockquote { background: #f3f3f3; }
       "reviews": { "url": "/api/comments?chapter={{chapter.index}}&paragraph={{para.index}}" }
     },
     "title": "第 {{para.index + 1}} 段评论",
-    "height": 0.8,
     "data": { "paragraph": "= para.text", "items": "= reviews.items" },
     "html": "<main id='comments'></main><script>for (const item of window.__NATIVE_PAGE_DATA__.items) { const p=document.createElement('p'); p.textContent=item.text; document.getElementById('comments').appendChild(p); }</script>"
   },
@@ -1355,7 +1354,7 @@ blockquote { background: #f3f3f3; }
 | `data` | 对象，值递归按模板／表达式求值；序列化后 UTF-8 上限 64 KiB。注入 `window.__NATIVE_PAGE_DATA__`，同时提供 `window.__QM_DATA__` 别名；不会自动暴露整个书源上下文 |
 | `fetch` | 最多 3 个附加请求，按声明顺序执行，可使用 `when`；结果直接绑定为声明的名称，如 `reviews`，不是 `fetch.reviews`。请求失败会使本次页面生成失败 |
 | `title` | 字符串模板／表达式，默认“评论”，最多 192 个字符 |
-| `height` | 初始弹层高度比例，0.2–1.0，默认 0.8；读者仍可拖动展开 |
+| `height` | 已停用。评论面板打开时多高由读者在宿主的阅读设置里决定；旧书源写了不报错，也不起作用 |
 
 页面在独立的无痕 Web 中以 `about:blank` 加载，书源 HTML 放入仅有 `allow-scripts` 权限的沙箱 iframe。**没有可配置的 `baseUrl` 或站点 origin，不继承站点 Cookie，不提供宿主脚本桥。** 允许内联脚本、内联样式及 `data:` 图片；网络、外链脚本／样式／字体、书源自行加载 iframe、表单提交、页面跳转、文件、定位、弹窗和权限请求被禁止。另禁用 WebRTC 构造器，沙箱不授予同源权限，阻止借用父窗口或新建空白子窗口的接口绕过限制。需要的评论内容由 `page.fetch` 通过引擎请求，使用书源现有的 Cookie、请求头与限流规则。页面可以在已取得的数据内交互；当前没有从页面调用引擎“加载更多”的桥接接口。
 
@@ -2283,7 +2282,7 @@ function verifyAndCheck(ctx) {
 | `content.imageDecode` | `algorithm`\*、`key`\*、`iv`、`keyEncoding`、`ivPrefixBytes`；或 `script`\*、`params`、`processPlainImages` |
 | `content.links[]` | `label`\*、`url` 或 `request`\*、`when`、`message` |
 | `content.comments` | `when`、`stats`、`counts`、`paragraphUrl`、`chapterUrl`、`page`、`chapterPage`（四种入口至少一个）、`hot`、`chapterHot`、`max` |
-| `content.comments.page/chapterPage` | `html`（必填）、`data`、`title`、`height`、`fetch`；仅支持内联评论页的宿主可用 |
+| `content.comments.page/chapterPage` | `html`（必填）、`data`、`title`、`fetch`（`height` 已停用）；仅支持内联评论页的宿主可用 |
 | `vars[]` | `key`\*、`label`、`options`、`default`、`filter`、`optionsScript`、`when` |
 | `voices[]` | `id`\*、`name`\* |
 | `cache.名称` | 请求字段（`url`\*）、`value`\*、`ttl`、`when` |
