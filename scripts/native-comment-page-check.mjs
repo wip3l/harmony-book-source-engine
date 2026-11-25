@@ -304,6 +304,47 @@ try {
   exprDef.content.comments.hot = '= {"1": {"text": "表达式热评", "likes": 7}}';
   const exprContent = await new Runner(exprDef, hotHost, {}).content(book, chapter);
   assert.deepEqual(exprContent.paragraphComments.map(item => item.preview ?? ''), ['', '表达式热评', '']);
+  // 冷启动后点评论（应用重开、上下文过期）：重建只取正文和评论数，不取热评和本章说；取数失败时带出真实原因。
+  Runner.clearCommentContexts(definition.url);
+  const coldDef = structuredClone(hotDef);
+  coldDef.content.comments.chapterHot = { request: { url: '/chot' }, text: '= res.text' };
+  let failStats = false;
+  const coldHost = createTestHost(JsonPathEvaluator, async (req) => {
+    if (req.url.includes('/stats')) {
+      // 评论数取不到只会让气泡消失；这里让上下文超出 2 MiB 上限，那才是重建本身失败。
+      return { counts: { 0: 2, 1: 9, 2: 5 }, filler: failStats ? 'x'.repeat(3 * 1024 * 1024) : '' };
+    }
+    if (req.url.includes('/hot/')) return { list: [{ content: '热评', likeCount: 1 }] };
+    if (req.url.includes('/chot')) return { text: '本章说' };
+    if (req.url.includes('/comments/')) return { items: [] };
+    return { text: '第一段\n第二段\n第三段' };
+  });
+  const coldContent = await new Runner(coldDef, coldHost, {}).content(book, chapter);
+  const coldAction = coldContent.paragraphComments[1].url;
+  assert(coldHost.requests.some(req => req.url.includes('/hot/')) && coldHost.requests.some(req => req.url.includes('/chot')),
+    'normal load still fetches hot comments');
+  Runner.clearCommentContexts(definition.url);
+  const coldStart = coldHost.requests.length;
+  const coldPage = await new Runner(coldDef, coldHost, {}).commentPage(book, chapter, coldAction);
+  assert.equal(coldPage.html, '<p>第二段</p>');
+  assert.deepEqual(coldHost.requests.slice(coldStart).map(req => req.url.replace('https://example.com', '')),
+    ['/chapter/1', '/stats', '/comments/1'], 'context rebuild skips hot comments and the chapter card');
+  // 预读别的章节会把共享表里最旧的上下文挤掉：重建出来的上下文直接用，不靠再去表里取。
+  Runner.clearCommentContexts(definition.url);
+  const sharedContexts = Runner.inlineContexts;
+  const realGet = sharedContexts.get;
+  sharedContexts.get = () => undefined;
+  try {
+    const evicted = await new Runner(coldDef, coldHost, {}).commentPage(book, chapter, coldAction);
+    assert.equal(evicted.html, '<p>第二段</p>', 'rebuilt context does not depend on the shared table');
+  } finally {
+    sharedContexts.get = realGet;
+  }
+  Runner.clearCommentContexts(definition.url);
+  failStats = true;
+  await assert.rejects(new Runner(coldDef, coldHost, {}).commentPage(book, chapter, coldAction),
+    /评论加载失败：内联评论上下文超过 2 MiB/, 'rebuild failure carries the real reason');
+  failStats = false;
   Runner.clearCommentContexts(definition.url);
   console.log('native-comment-page-check: lazy fetch, schema, warm/cold contexts, stale actions, fallback, cancellation, UTF-8 limits, safe injection and saved-var identity passed');
 } finally { mods.cleanup(); }

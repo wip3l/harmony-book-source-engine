@@ -115,6 +115,11 @@ export interface NativeRunnerHost extends NativeExprHost {
   /** 后台纯解析，JSON 进出；返回 null 表示没接手（超限、后台出错），调用方回到本线程解析。 */
   parsePure?(input: string): Promise<string | null>;
   fetch(request: NativeRequest): Promise<NativeResponse>;
+  /**
+   * 点评论时要重跑正文重建章节上下文，开始和结束各通知一次。
+   * 给评论页设了请求额度的宿主据此把这段请求排除在外：脚本书源冷启动时取一章正文就可能用掉十来次请求。
+   */
+  commentContextRebuild?(active: boolean): void;
   /** 调试时记录规则求值；不调试时不提供。 */
   trace?(entry: NativeRuleTrace): void;
   /** 读取声明式缓存；没有或已过期时返回 undefined。 */
@@ -397,6 +402,14 @@ class UiPacer {
 
 export class NativeSourceRunner {
   private static inlineContexts: Map<string, InlineContext> = new Map<string, InlineContext>();
+  /**
+   * 点评论时上下文已经不在内存里（应用重开、超过 5 分钟、被别的章节挤掉），要重跑一次正文把它建回来。
+   * 这次重跑只为拿上下文：不取热评和本章说（省请求，也不必等），建好的上下文直接留在本运行器上，
+   * 不依赖共享表——预读别的章节会把表里最旧的一条挤掉。失败原因也记下来，交给点击方显示。
+   */
+  private contextRebuild: boolean = false;
+  private rebuiltContext: InlineContext | null = null;
+  private rebuildFailure: string = '';
   /** 热评请求整体最多等这么久，超过的段落只显示气泡。 */
   private static readonly HOT_COMMENT_WAIT_MS: number = 4000;
 
@@ -1202,6 +1215,7 @@ export class NativeSourceRunner {
       } catch (e) {
         result.paragraphComments = [];
         result.chapterCommentUrl = '';
+        if (this.contextRebuild) this.rebuildFailure = e instanceof Error ? e.message : String(e);
         if (this.host.trace) this.host.trace({ field: 'content.comments', rule: '', type: 'error', count: 0,
           preview: '', error: e instanceof Error ? e.message : String(e) });
       }
@@ -1379,7 +1393,7 @@ export class NativeSourceRunner {
     scope.set('stats', spec.stats ? await this.fetchValue(spec.stats, scope) : null);
     // 本章说热评与段落热评同时请求。
     const noChapterHot: NativeChapterHot = { hots: [], count: '', emojis: {} };
-    const chapterHotTask: Promise<NativeChapterHot> = spec.chapterHot ?
+    const chapterHotTask: Promise<NativeChapterHot> = spec.chapterHot && !this.contextRebuild ?
       this.fetchChapterHot(spec.chapterHot, scope) : Promise.resolve(noChapterHot);
     const inline = !!(spec.page || spec.chapterPage);
     const contextKey = inline ? this.inlineKey(book, chapter) : '';
@@ -1392,7 +1406,9 @@ export class NativeSourceRunner {
       // 热评只是卡片上的附加文字，取不到时照常显示气泡。
       let hot: NativeValue = null;
       try {
-        if (typeof spec.hot === 'string' && spec.hot) {
+        if (this.contextRebuild) {
+          hot = null;
+        } else if (typeof spec.hot === 'string' && spec.hot) {
           hot = await this.value(spec.hot, scope);
         } else if (spec.hot && typeof spec.hot === 'object') {
           hot = await this.fetchHotComments(spec.hot, counts, lines, scope);
@@ -1451,6 +1467,7 @@ export class NativeSourceRunner {
         if (!oldest.done) NativeSourceRunner.inlineContexts.delete(oldest.value);
       }
       NativeSourceRunner.inlineContexts.set(contextKey, context);
+      if (this.contextRebuild) this.rebuiltContext = context;
     }
     const chapterHot = await chapterHotTask;
     if (result.chapterCommentUrl && chapterHot.hots.length > 0) {
@@ -1497,12 +1514,23 @@ export class NativeSourceRunner {
     let context = NativeSourceRunner.inlineContexts.get(key);
     if (!context || Date.now() - context.savedAt >= 5 * 60 * 1000) {
       NativeSourceRunner.inlineContexts.delete(key);
-      await this.content(book, chapter);
-      context = NativeSourceRunner.inlineContexts.get(key);
+      this.contextRebuild = true;
+      this.rebuiltContext = null;
+      this.rebuildFailure = '';
+      if (this.host.commentContextRebuild) this.host.commentContextRebuild(true);
+      try {
+        await this.content(book, chapter);
+      } finally {
+        this.contextRebuild = false;
+        if (this.host.commentContextRebuild) this.host.commentContextRebuild(false);
+      }
+      context = this.rebuiltContext || NativeSourceRunner.inlineContexts.get(key);
     }
     if (this.cancelled()) throw new Error('已取消');
     const comments = this.definition.content?.comments;
     const spec = line < 0 ? comments?.chapterPage : comments?.page;
+    // 重建时评论数据没取到：把真实原因交出去，重试就能好的情况不必让读者去刷新本章。
+    if (!context && this.rebuildFailure) throw new Error(`评论加载失败：${this.rebuildFailure}`);
     if (!context || !spec) throw new Error('评论上下文不可用，请刷新本章');
     const para = context.paragraphs.find((item: InlineParagraph): boolean => item.index === line);
     if ((line >= 0 && (!para || para.hash !== match[3])) || (line < 0 && context.chapterHash !== match[3])) {
