@@ -204,6 +204,7 @@ export interface NativeCommentPageSpec {
   html: string;
   data?: Record<string, NativeValue>;
   title?: string;
+  /** 已停用：评论面板多高由读者在宿主里设置。旧书源写了照样通过校验，读取时忽略。 */
   height?: number;
   /** At most three requests, evaluated only after a click. Results bind directly to their names. */
   fetch?: Record<string, NativeFetchSpec>;
@@ -994,8 +995,6 @@ export class NativeSourceSpec {
       errors.push(`${path}.html 必须是非空字符串规则`);
       return;
     }
-    if (page.height !== undefined && !(typeof page.height === 'number' && Number.isFinite(page.height) &&
-      page.height >= 0.2 && page.height <= 1)) errors.push(`${path}.height 必须在 0.2 到 1 之间`);
     if (page.title !== undefined && typeof page.title !== 'string') errors.push(`${path}.title 必须是字符串规则`);
     if (page.data !== undefined && (!page.data || typeof page.data !== 'object' || Array.isArray(page.data))) {
       errors.push(`${path}.data 必须是对象`);
