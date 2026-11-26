@@ -815,6 +815,16 @@ export class NativeSourceService {
   /** 书籍变量里记分站名的键。 */
   static readonly SITE_VARIABLE: string = 'site';
 
+  /** 书籍变量里记作者主页地址的键。 */
+  static readonly AUTHOR_URL_VARIABLE: string = 'authorUrl';
+
+  /** 原生书源在详情阶段给出的作者主页地址；没给、不是网页地址或书源不是原生时为空串。 */
+  static authorUrlOf(source: BookSource | null | undefined, bookVariable: string): string {
+    if (!source || !NativeSourceService.isNative(source) || !bookVariable) return '';
+    const url = BookUrlResolver.getVariableJson(bookVariable, NativeSourceService.AUTHOR_URL_VARIABLE).trim();
+    return /^https?:\/\/[^\s]+$/i.test(url) ? url : '';
+  }
+
   /** 搜索或发现结果来自聚合书源的哪个分站；没标时为空串。 */
   static siteOf(book: SearchBook): string {
     return book.variable ? BookUrlResolver.getVariableJson(book.variable, NativeSourceService.SITE_VARIABLE) : '';
@@ -917,6 +927,11 @@ export class NativeSourceService {
       source, record.type ? NativeSourceService.tabVariable(record.type) : book.variable, !record.type));
     for (const key of Object.keys(record.keep)) {
       variable = BookUrlResolver.setVariableJson(variable, key, record.keep[key]);
+    }
+    // 作者主页以最近一次详情为准：这次没给就清掉上次记的，免得换了书源规则后还留着旧入口。
+    const authorUrl = /^https?:\/\/[^\s]+$/i.test(record.authorUrl || '') ? (record.authorUrl as string).substring(0, 2048) : '';
+    if (authorUrl || BookUrlResolver.getVariableJson(variable, NativeSourceService.AUTHOR_URL_VARIABLE)) {
+      variable = BookUrlResolver.setVariableJson(variable, NativeSourceService.AUTHOR_URL_VARIABLE, authorUrl);
     }
     book.variable = variable;
     return book;

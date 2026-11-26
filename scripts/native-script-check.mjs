@@ -192,6 +192,13 @@ try {
     js: "function search() { return [{ name: '甲', bookUrl: '/a', site: '分站一' }, { name: '乙', bookUrl: '/b' }]; }" }),
     scriptHost(respond), {}).search('x', 1);
   equal(sited.map((b) => b.site || ''), ['分站一', ''], '脚本结果按同名键取 site');
+  // 详情可以给作者主页地址 authorUrl：相对地址按书源地址补全，没写的为空。
+  const authored = await new NativeSourceRunner(define({ ...base, detail: { script: 'detail' },
+    js: "function detail(ctx) { return { name: '甲', bookUrl: ctx.book.bookUrl, authorUrl: ctx.book.bookUrl.slice(-2) === '/a' ? '/author/7' : '' }; }" }),
+    scriptHost(respond), {});
+  equal([(await authored.detail({ bookUrl: 'https://api.example.com/a', tocUrl: '', name: '', author: '', kind: '', type: 'text', vars: {} })).authorUrl,
+    (await authored.detail({ bookUrl: 'https://api.example.com/b', tocUrl: '', name: '', author: '', kind: '', type: 'text', vars: {} })).authorUrl || ''],
+    ['https://api.example.com/author/7', ''], '详情按同名键取 authorUrl 并补全地址');
   equal(books.map((b) => [b.name, b.author, b.bookUrl]), [
     ['斗破', '土豆', 'https://api.example.com/b/1'],
     ['凡人', '忘语', 'https://api.example.com/b/2'],

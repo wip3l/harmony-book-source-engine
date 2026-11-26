@@ -180,6 +180,8 @@ export interface NativeBookRecord {
   type: string;
   /** 聚合书源里这条结果来自哪个分站；普通书源不写。宿主可以据此按分站分别计搜索上限。 */
   site?: string;
+  /** 作者主页的网页地址，详情阶段给出；没有就不写。宿主在详情页点作者名时提供“作者主页”入口。 */
+  authorUrl?: string;
   keep: Record<string, string>;
 }
 
@@ -351,7 +353,7 @@ type StageReuse = '' | 'keep' | 'take';
 const MENU_STATIC = 'native:menu:';
 /** 脚本阶段不写 fields 时，按同名键取值的字段。 */
 const BOOK_FIELD_NAMES = ['name', 'author', 'kind', 'intro', 'coverUrl', 'wordCount', 'lastChapter', 'updateTime',
-  'status', 'bookUrl', 'tocUrl', 'type', 'site'];
+  'status', 'bookUrl', 'tocUrl', 'type', 'site', 'authorUrl'];
 const CHAPTER_FIELD_NAMES = ['title', 'url', 'isVip', 'isPay', 'isVolume', 'tag', 'updateTime', 'wordCount', 'type'];
 const STAGE_NAMES: Record<string, string> = {
   '搜索': 'search', '发现': 'explore', '详情': 'detail', '目录': 'toc', '正文': 'content', '发现分类': 'menus'
@@ -2176,6 +2178,7 @@ export class NativeSourceRunner {
       tocUrl: (await url('tocUrl')),
       type: (literalType ? String(typeSpec).trim() : (await text('type'))).toLowerCase(),
       site: fields['site'] === undefined ? '' : (await text('site')),
+      authorUrl: fields['authorUrl'] === undefined ? '' : (await url('authorUrl')),
       keep: {}
     };
   }
