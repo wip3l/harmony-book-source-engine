@@ -47,6 +47,12 @@ export class ReaderActionMarker {
   static readonly MAX_EMOJIS: number = 24;
   static readonly MAX_EMOJI_TOKEN_LENGTH: number = 16;
   static readonly MAX_EMOJI_URL_LENGTH: number = 1024;
+  /**
+   * 书内链接（如 EPUB 里指向其他章节的链接）：标签就是正文原来的文字。去标记（朗读、字数、复制、
+   * 超出数量被丢弃）时保留标签，正文不缺字；其它动作的标签只是按钮文字，照旧去掉。
+   */
+  static readonly TEXT_LINK_SCHEME: string = 'legado-epub-link:';
+  private static readonly TEXT_LINK_PROBE: string = 'legado-epub-link%3A';
 
   /**
    * 表情代号到图片地址。接受 { 代号: 地址 } 或 [{ token, url }]；只留 http(s) 地址、
@@ -240,6 +246,13 @@ export class ReaderActionMarker {
     }
   }
 
+  /** 书内链接标记的正文文字；不是书内链接时返回空串。只有含链接前缀的标记才解析。 */
+  static textLinkLabel(marker: string): string {
+    if (!marker || marker.indexOf(ReaderActionMarker.TEXT_LINK_PROBE) < 0) return '';
+    const data = ReaderActionMarker.parse(marker);
+    return data && data.url.startsWith(ReaderActionMarker.TEXT_LINK_SCHEME) ? data.label : '';
+  }
+
   static has(value: string): boolean {
     const text = value || '';
     return text.includes(ReaderActionMarker.PREFIX) || text.includes(ReaderActionMarker.LEGACY_PREFIX) ||
@@ -264,7 +277,9 @@ export class ReaderActionMarker {
       const start = bounds[0];
       const end = bounds[1];
       result += source.substring(cursor, start);
-      if (preserveOffsets) result += ' '.repeat(Math.max(0, end - start));
+      const text = ReaderActionMarker.textLinkLabel(source.substring(start, end));
+      result += text;
+      if (preserveOffsets) result += ' '.repeat(Math.max(0, end - start - text.length));
       cursor = Math.max(start + 1, end);
     }
     return result;
@@ -298,6 +313,8 @@ export class ReaderActionMarker {
         parts.push(marker);
         count++;
         totalLength += marker.length;
+      } else {
+        parts.push(ReaderActionMarker.textLinkLabel(marker));
       }
       cursor = end;
     }
