@@ -38,6 +38,11 @@ export interface HttpRequest {
   observedRequestHeaders?: Record<string, string>;
   /** Custom media credentials are scoped to the initial origin, including SDK redirects. */
   protectedHeaderNames?: string[];
+  /**
+   * false：不自动跟随重定向，3xx 原样返回给调用方逐跳处理（插件请求要逐跳核对域名白名单）。
+   * 只在能挂请求拦截器的系统（API 22+）上生效；挂不上时仍由系统跟随，finalUrl 留空表示无法观测。
+   */
+  followRedirects?: boolean;
   webJs?: string;
   /** See WebBookFetchRequest: re-run `webJs` until the result matches, up to the attempt limit. */
   webJsAcceptPattern?: string;
@@ -316,7 +321,8 @@ export class HttpClient {
     if (req.deadlineAt && Date.now() >= req.deadlineAt) return HttpClient.timeoutResponse(req);
     const client = http.createHttp();
     this.activeClients.add(client);
-    const destination = new HttpFinalUrlObserver(client);
+    const destination = new HttpFinalUrlObserver(client, req.followRedirects === false);
+    const manualRedirects = req.followRedirects === false && destination.attached;
     let responseTooLarge = false;
     let expired = false;
     const deadlineTimer = req.deadlineAt ? setTimeout((): void => {
@@ -432,6 +438,16 @@ export class HttpClient {
       if (expired || (req.deadlineAt && Date.now() >= req.deadlineAt)) return HttpClient.timeoutResponse(req);
       this.endTransportTiming(req, transportStartedAt, forceHttp1, resp);
       const responseHeaders = (resp.header || {}) as Record<string, string>;
+      // 停下的重定向可能没有正文，只带头部交回调用方决定下一跳。
+      if (manualRedirects && [301, 302, 303, 307, 308].includes(resp.responseCode)) {
+        const setCookie = this.findHeader(responseHeaders, 'set-cookie');
+        if (setCookie && req.useCookieJar !== false) {
+          CookieStore.forSource(req.cookieSource).setCookies(req.url, setCookie);
+          CookieStore.forSource(req.cookieSource).saveAsync();
+        }
+        return { url: req.url, finalUrl: req.url, statusCode: resp.responseCode, headers: responseHeaders,
+          body: '', success: false };
+      }
       if (maxResponseBytes > 0 && resp.result instanceof ArrayBuffer && resp.result.byteLength > maxResponseBytes) {
         responseTooLarge = true;
         throw new Error('response too large');
@@ -544,8 +560,9 @@ export class HttpClient {
     }
     const client = http.createHttp();
     this.activeClients.add(client);
-    const manualRedirects = !!req.protectedHeaderNames?.length;
-    const destination = new HttpFinalUrlObserver(client, manualRedirects);
+    const wantsManualRedirects = !!req.protectedHeaderNames?.length || req.followRedirects === false;
+    const destination = new HttpFinalUrlObserver(client, wantsManualRedirects);
+    const manualRedirects = wantsManualRedirects && destination.attached;
     if (req.protectedHeaderNames?.length && !destination.attached) {
       this.activeClients.delete(client);
       try { client.destroy(); } catch (_) { }
